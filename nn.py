@@ -1,117 +1,159 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
-from PIL import Image
+from torch.utils.data import Dataset, DataLoader
+import numpy as np
+import pandas as pd
+import cv2
 import os
-import json
+import glob
+import logging
+from tqdm import tqdm
+import argparse
 
-# Define the dataset class
+# Configure logging
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Command-line arguments
+parser = argparse.ArgumentParser(description='Train a microtubule tracking model.')
+parser.add_argument('--batch_size', type=int, default=1, help='Batch size for training.')
+parser.add_argument('--num_workers', type=int, default=0, help='Number of workers for data loading.')
+parser.add_argument('--num_epochs', type=int, default=20, help='Number of epochs for training.')
+parser.add_argument('--image_dir', type=str, required=True, help='Directory containing images.')
+parser.add_argument('--annotation_file', type=str, required=True, help='File containing annotations.')
+
+args = parser.parse_args()
+
+# Check for GPU
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
+# Custom Dataset
 class MicrotubuleDataset(Dataset):
-    def __init__(self, image_dir, label_file, transform=None):
-        self.image_dir = image_dir
-        self.transform = transform
-        self.image_files = sorted(os.listdir(image_dir))
-        with open(label_file, 'r') as f:
-            self.labels = json.load(f)
+    def __init__(self, image_dir, annotation_file):
+        self.image_paths = glob.glob(os.path.join(image_dir, '*.jpg'))
+        self.image_paths.sort()  # Ensure images are in sequential order
+        self.annotations = self._load_annotations(annotation_file)
         
+    def _load_annotations(self, annotation_file):
+        data = []
+        try:
+            with open(annotation_file, 'r') as f:
+                for line in f:
+                    if line.startswith('#') or not line.strip():
+                        continue
+                    parts = line.strip().split()
+                    if len(parts) == 5:
+                        frame, coord_num, x, y, zero = parts
+                        data.append([int(frame), int(coord_num), float(x), float(y), int(zero)])
+        except FileNotFoundError:
+            logging.error(f"Annotation file {annotation_file} not found.")
+            raise
+        
+        columns = ['frame', 'coord_number', 'x', 'y', 'zero']
+        return pd.DataFrame(data, columns=columns)
+    
     def __len__(self):
-        return len(self.image_files)
+        return len(self.image_paths)
     
     def __getitem__(self, idx):
-        img_path = os.path.join(self.image_dir, self.image_files[idx])
-        image = Image.open(img_path).convert("RGB")
-        if self.transform:
-            image = self.transform(image)
-        label = torch.tensor(self.labels[self.image_files[idx]], dtype=torch.float32)
-        return image, label
+        image_path = self.image_paths[idx]
+        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        
+        if image is None:
+            logging.warning(f"Image {image_path} not found or unable to read.")
+            return self.__getitem__((idx + 1) % len(self.image_paths))
+        
+        image = cv2.resize(image, (512, 512))
+        image = image.astype(np.float32) / 255.0
+        image = np.expand_dims(image, axis=0)  # Add channel dimension
+        
+        frame_number = idx  # Assuming the frame number corresponds to the index
+        coordinates = self.annotations[self.annotations['frame'] == frame_number][['x', 'y']].values.astype(np.float32)
+        if coordinates.shape[0] == 0:
+            logging.warning(f"No coordinates found for frame {frame_number}.")
+            return self.__getitem__((idx + 1) % len(self.image_paths))
+        
+        return torch.tensor(image), torch.tensor(coordinates)
 
-# Define the neural network
-class MicrotubuleNet(nn.Module):
+# Custom collate function to handle batches with varying sizes
+def custom_collate_fn(batch):
+    images, coords = zip(*batch)
+    images = torch.stack(images, dim=0)
+    max_len = max(coord.shape[0] for coord in coords)
+    padded_coords = torch.zeros((len(coords), max_len, 2))
+    for i, coord in enumerate(coords):
+        padded_coords[i, :coord.shape[0], :] = coord
+    return images, padded_coords
+
+# Model
+class MicrotubuleTrackingModel(nn.Module):
     def __init__(self):
-        super(MicrotubuleNet, self).__init__()
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=16, stride=1, padding=7)
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.conv2 = nn.Conv2d(16, 16, kernel_size=16, stride=1, padding=7)
+        super(MicrotubuleTrackingModel, self).__init__()
+        self.conv1 = nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1)
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1)
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
         
-        self.rnn1 = nn.LSTM(16 * 16 * 16, 128, batch_first=True)
-        self.rnn2 = nn.LSTM(128, 128, batch_first=True)
-        
-        self.fc1 = nn.Linear(128, 64)
-        self.fc2 = nn.Linear(64, 2)  # Assuming 2D coordinates
-        
+        self.rnn = nn.LSTM(input_size=32*128*128, hidden_size=128, num_layers=1, batch_first=True)
+        self.fc = nn.Linear(128, 2)  # Output layer to predict x, y coordinates
+    
     def forward(self, x):
-        batch_size, seq_length, c, h, w = x.size()
-        x = x.view(batch_size * seq_length, c, h, w)
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
+        batch_size, c, h, w = x.size()
         
-        x = x.view(batch_size, seq_length, -1)
+        x = self.pool1(torch.relu(self.conv1(x)))
+        x = self.pool2(torch.relu(self.conv2(x)))
         
-        x, _ = self.rnn1(x)
-        x, _ = self.rnn2(x)
+        x = x.view(batch_size, -1)
+        x = x.unsqueeze(1)  # Add sequence dimension
         
-        x = F.relu(self.fc1(x))
-        x = self.fc2(x)
-        
+        x, _ = self.rnn(x)
+        x = self.fc(x[:, -1, :])  # Use the output from the last time step
         return x
 
-# Define the training function
-def train(model, dataloader, criterion, optimizer, num_epochs=25):
-    model.train()
+# Training function
+def train(model, dataloader, criterion, optimizer, num_epochs=20):
     for epoch in range(num_epochs):
-        running_loss = 0.0
-        for inputs, labels in dataloader:
-            inputs, labels = inputs.cuda(), labels.cuda()
+        model.train()
+        epoch_loss = 0
+        for images, coords in tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}"):
+            images, coords = images.to(device), coords.to(device)
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
+            outputs = model(images)
+            loss = criterion(outputs, coords[:, 0, :])  # Only compare the first coordinate for simplicity
             loss.backward()
             optimizer.step()
-            running_loss += loss.item()
-        
-        print(f'Epoch {epoch+1}/{num_epochs}, Loss: {running_loss/len(dataloader)}')
+            epoch_loss += loss.item()
+        print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss/len(dataloader)}')
 
-# Define the evaluation function
-def evaluate(model, dataloader, criterion):
+# Testing function
+def test(model, dataloader):
     model.eval()
-    total_loss = 0.0
     with torch.no_grad():
-        for inputs, labels in dataloader:
-            inputs, labels = inputs.cuda(), labels.cuda()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            total_loss += loss.item()
-    print(f'Loss: {total_loss/len(dataloader)}')
+        for images, coords in tqdm(dataloader, desc="Testing"):
+            images, coords = images.to(device), coords.to(device)
+            outputs = model(images)
+            print('Predicted Coordinates:', outputs)
+            print('Actual Coordinates:', coords[:, 0, :])
 
-# Placeholder directories and label file
-train_dir = 'path/to/train/images'
-train_label_file = 'path/to/train/labels.json'
-test_dir = 'path/to/test/images'
-test_label_file = 'path/to/test/labels.json'
+# Main
+if __name__ == "__main__":
+    try:
+        dataset = MicrotubuleDataset(args.image_dir, args.annotation_file)
+    except FileNotFoundError:
+        print("Annotation file not found. Exiting.")
+        exit(1)
 
-# Define the data loaders
-transform = transforms.Compose([
-    transforms.Resize((128, 128)),
-    transforms.ToTensor()
-])
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=custom_collate_fn)
 
-train_dataset = MicrotubuleDataset(train_dir, train_label_file, transform)
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    torch.cuda.empty_cache()  # Clear GPU memory before training
 
-test_dataset = MicrotubuleDataset(test_dir, test_label_file, transform)
-test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+    model = MicrotubuleTrackingModel().to(device)
+    criterion = nn.MSELoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-# Initialize the model, loss function, and optimizer
-model = MicrotubuleNet().cuda()
-criterion = nn.MSELoss()  # Using MSELoss for coordinate regression
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+    train(model, dataloader, criterion, optimizer, num_epochs=args.num_epochs)
+    test(model, dataloader)
 
-# Train the model
-train(model, train_loader, criterion, optimizer, num_epochs=25)
 
-# Evaluate the model
-evaluate(model, test_loader, criterion)
 

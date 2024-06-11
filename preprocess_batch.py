@@ -80,7 +80,11 @@ def preprocess_images_in_directory(input_directory, output_directory, target_siz
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
     
+    count = 0;
     for filename in os.listdir(input_directory):
+        count = count+1
+        if count > 2000:
+            break
         if filename.endswith('.png') or filename.endswith('.jpg') or filename.endswith('.jpeg'):
             try:
                 image_path = os.path.join(input_directory, filename)
@@ -109,8 +113,8 @@ def main():
         print(f"Error: Unable to load image at {image_path}")
 
     # Batch processing example
-    input_directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'training_images')
-    output_directory = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'preprocessed_images')
+    input_directory = '/home/yuming/Downloads/MT7_30min_100x_443_453pm_1500'
+    output_directory = '/home/yuming/Pictures/processed'
     preprocess_images_in_directory(input_directory, output_directory, target_size=(512, 512))
 
 if __name__ == '__main__':
