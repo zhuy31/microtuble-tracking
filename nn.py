@@ -1,17 +1,21 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from PIL import Image
 import os
+import json
 
 # Define the dataset class
 class MicrotubuleDataset(Dataset):
-    def __init__(self, image_dir, transform=None):
+    def __init__(self, image_dir, label_file, transform=None):
         self.image_dir = image_dir
         self.transform = transform
         self.image_files = sorted(os.listdir(image_dir))
+        with open(label_file, 'r') as f:
+            self.labels = json.load(f)
         
     def __len__(self):
         return len(self.image_files)
@@ -21,7 +25,8 @@ class MicrotubuleDataset(Dataset):
         image = Image.open(img_path).convert("RGB")
         if self.transform:
             image = self.transform(image)
-        return image
+        label = torch.tensor(self.labels[self.image_files[idx]], dtype=torch.float32)
+        return image, label
 
 # Define the neural network
 class MicrotubuleNet(nn.Module):
@@ -58,8 +63,8 @@ def train(model, dataloader, criterion, optimizer, num_epochs=25):
     model.train()
     for epoch in range(num_epochs):
         running_loss = 0.0
-        for inputs in dataloader:
-            inputs = inputs.cuda()
+        for inputs, labels in dataloader:
+            inputs, labels = inputs.cuda(), labels.cuda()
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
@@ -74,16 +79,18 @@ def evaluate(model, dataloader, criterion):
     model.eval()
     total_loss = 0.0
     with torch.no_grad():
-        for inputs in dataloader:
-            inputs = inputs.cuda()
+        for inputs, labels in dataloader:
+            inputs, labels = inputs.cuda(), labels.cuda()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
             total_loss += loss.item()
     print(f'Loss: {total_loss/len(dataloader)}')
 
-# Placeholder directories
-train_dir = 'path/to/train'
-test_dir = 'path/to/test'
+# Placeholder directories and label file
+train_dir = 'path/to/train/images'
+train_label_file = 'path/to/train/labels.json'
+test_dir = 'path/to/test/images'
+test_label_file = 'path/to/test/labels.json'
 
 # Define the data loaders
 transform = transforms.Compose([
@@ -91,15 +98,15 @@ transform = transforms.Compose([
     transforms.ToTensor()
 ])
 
-train_dataset = MicrotubuleDataset(train_dir, transform)
+train_dataset = MicrotubuleDataset(train_dir, train_label_file, transform)
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 
-test_dataset = MicrotubuleDataset(test_dir, transform)
+test_dataset = MicrotubuleDataset(test_dir, test_label_file, transform)
 test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
 # Initialize the model, loss function, and optimizer
 model = MicrotubuleNet().cuda()
-criterion = nn.CrossEntropyLoss()
+criterion = nn.MSELoss()  # Using MSELoss for coordinate regression
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # Train the model
@@ -107,3 +114,4 @@ train(model, train_loader, criterion, optimizer, num_epochs=25)
 
 # Evaluate the model
 evaluate(model, test_loader, criterion)
+

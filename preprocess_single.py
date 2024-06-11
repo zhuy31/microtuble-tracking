@@ -1,6 +1,6 @@
 import os
-import cv2
 import numpy as np
+import cv2
 import imgaug.augmenters as iaa
 
 def normalize_image(image):
@@ -13,7 +13,7 @@ def resize_image(image, target_size):
 aug = iaa.Sequential([
     iaa.Rotate((-10, 10)),
     iaa.Resize((0.8, 1.2)),
-    iaa.TranslateX(percent=(-0.1, 0.1)),
+    iaa.TranslateX(percent=(-0.1, 0.1)), 
     iaa.TranslateY(percent=(-0.1, 0.1)),
     iaa.Flipud(0.5),
     iaa.Fliplr(0.5),
