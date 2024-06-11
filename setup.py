@@ -15,6 +15,8 @@ def install_dependencies():
         'tensorflow',
         'scikit-learn',  # Corrected from 'sklearn' to 'scikit-learn'
         'numpy'
+        'torch'
+        'torchvision'
     ]
 
     for package in dependencies:
