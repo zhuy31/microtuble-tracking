@@ -28,24 +28,40 @@ def enhance_contrast(image):
     return clahe.apply(image)
 
 
-def remove_small_objects(image):
+def create_bounding_boxes(image, num_boxes=3, padding=10):
     _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
 
-    largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])  # Skip the background
-    cleaned_image = np.zeros_like(image)
-    cleaned_image[labels == largest_label] = image[labels == largest_label]
+    sorted_stats = sorted(stats[1:], key=lambda x: x[cv2.CC_STAT_AREA], reverse=True)[:num_boxes]
+    bounding_boxes = []
+    for stat in sorted_stats:
+        x, y, w, h, area = stat
+        x = max(x - padding, 0)
+        y = max(y - padding, 0)
+        w = min(w + 2 * padding, image.shape[1] - x)
+        h = min(h + 2 * padding, image.shape[0] - y)
+        bounding_boxes.append((x, y, x + w, y + h))
+    return bounding_boxes
 
+
+def remove_small_objects(image, bounding_boxes):
+    _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+
+    cleaned_image = np.zeros_like(image)
+    for box in bounding_boxes:
+        x1, y1, x2, y2 = box
+        cleaned_image[y1:y2, x1:x2] = image[y1:y2, x1:x2]
     return cleaned_image
 
 
-def preprocess_image(image, target_size=(512, 512)):
+def preprocess_image(image, bounding_boxes, target_size=(512, 512)):
     image = normalize_image(image)
     image = resize_image(image, target_size)
     image = denoise_image(image)
     if len(image.shape) == 2:  # Grayscale image
         image = enhance_contrast(image)
-    image = remove_small_objects(image)
+    image = remove_small_objects(image, bounding_boxes)
     return image
 
 
@@ -60,6 +76,8 @@ def preprocess_images_in_directory(input_directory, output_directory, target_siz
     filenames = sorted([f for f in os.listdir(input_directory)
                         if f.endswith('.png') or f.endswith('.jpg') or f.endswith('.jpeg')])
 
+    bounding_boxes = None
+
     with tqdm(total=len(filenames), desc='Processing images') as pbar:
         for filename in filenames:
             input_path = os.path.join(input_directory, filename)
@@ -71,7 +89,9 @@ def preprocess_images_in_directory(input_directory, output_directory, target_siz
 
             image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
             if image is not None:
-                preprocessed_image = preprocess_image(image, target_size)
+                if bounding_boxes is None:
+                    bounding_boxes = create_bounding_boxes(image)
+                preprocessed_image = preprocess_image(image, bounding_boxes, target_size)
                 save_preprocessed_image(preprocessed_image, output_path)
             else:
                 print(f"Error: Unable to load image {filename}")
@@ -138,6 +158,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-
