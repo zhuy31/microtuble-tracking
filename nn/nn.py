@@ -184,9 +184,11 @@ class MicrotubuleTrackingModel(nn.Module):
         return x.view(batch_size, self.num_points, 2)  # reshape to (batch_size, num_points, 2)
 
 # Custom loss function using Hungarian algorithm for optimal matching
+# Custom loss function using Hungarian algorithm for optimal matching
 def custom_loss_function(predicted_coords, true_coords):
     batch_size, num_points, _ = predicted_coords.size()
     total_loss = 0
+    weighted_term_weight = 0.1  # Adjust the weight of the weighted term as needed
 
     for i in range(batch_size):
         pred = predicted_coords[i].to(device)
@@ -201,12 +203,18 @@ def custom_loss_function(predicted_coords, true_coords):
         matched_pred = pred[row_ind]
         matched_true = true[col_ind]
 
-        # Calculate the Euclidean distance for matched pairs
+        # Calculate the Euclidean distance for matched pairs (Hungarian loss)
         frame_loss += torch.norm(matched_pred - matched_true, dim=1).mean()
-      
+
+        # Weighted term to penalize the sum of squared distances between each predicted coordinate and the nearest true coordinate
+        nearest_distances = torch.min(distance_matrix, dim=1)[0]  # Get the minimum distance for each predicted point
+        weighted_term = torch.sum(nearest_distances**2)
+        frame_loss += weighted_term_weight * weighted_term
+
         total_loss += frame_loss
   
     return total_loss / batch_size
+
 
 def train(model, dataloader, criterion, optimizer, num_epochs=20, view_last_epoch=False):
     scaler = torch.cuda.amp.GradScaler()  # For mixed precision
