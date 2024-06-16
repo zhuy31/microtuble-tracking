@@ -183,7 +183,8 @@ class MicrotubuleTrackingModel(nn.Module):
         self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
       
         # Fully connected layer
-        self.fc = nn.Linear(16 * (image_size // 8) * (image_size // 8), 2 * self.num_points)  # Output layer to predict multiple x, y coordinates
+        fc_input_size = 16 * (image_size // 8) * (image_size // 8)
+        self.fc = nn.Linear(fc_input_size, 2 * self.num_points)  # Output layer to predict multiple x, y coordinates
   
     def forward(self, x):
         batch_size, seq_len, c, h, w = x.size()  # include seq_len dimension

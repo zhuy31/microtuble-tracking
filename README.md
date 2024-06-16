@@ -9,11 +9,12 @@ Two methods:
 **Rudimentary Documentation/Example commands:**
 
 **Preprocessing**
+
 select ROI, press **enter** to confirm once, press **enter** to confirm for the second time (**c** to cancel at any time)
 Allows for selection of region of interest (ROI), and converts all images to 512x512 grayscale. Scales coordinate training file correspondingly.
 
 ```
-c:/Users/Jackson/Documents/GitHub/microtuble-tracking/nn/preprocessingnn.py --input_dir C:\Users\Jackson\Downloads\MT7_30min_100x_443_453pm_1500 --output_dir C:\Users\Jackson\Documents\mt_data\preprocessed\imageset1 --coords_file C:\Users\Jackson\Downloads\MT7snake.txt
+c:/Users/Jackson/Documents/GitHub/microtuble-tracking/nn/preprocessingnn.py --input_dir C:\Users\Jackson\Downloads\MT7_30min_100x_443_453pm_1500\MT7_30min_100x_443_453pm_1500 --output_dir C:\Users\Jackson\Documents\mt_data\preprocessed\imageset1 --coords_file C:\Users\Jackson\Downloads\MT7snake.txt
 ```
 
 
@@ -23,3 +24,11 @@ Creates many folders each with transformations of the imageset along with transf
 ```
 c:/Users/Jackson/Documents/GitHub/microtuble-tracking/nn/postprocessingnn.py --input_dir C:\Users\Jackson\Documents\mt_data\preprocessed --output_dir C:\Users\Jackson\Documents\mt_data\postprocessed
 ```
+
+**Training Neural Network**
+
+```
+C:/Users/Jackson/AppData/Local/Programs/Python/Python312/python.exe c:/Users/Jackson/Documents/GitHub/microtuble-tracking/nn/nn.py --data_dir C:\Users\Jackson\Documents\mt_data\postprocessed --batch-size 1 --num_workers 4 --num_epochs 20
+```
+
+**Running Neural Network**

@@ -15,11 +15,33 @@ def fill_black_with_noise(image):
 def rotate_image(image, angle):
     (h, w) = image.shape[:2]
     center = (w // 2, h // 2)
+    angle_rad = np.deg2rad(angle)
+    cos = np.abs(np.cos(angle_rad))
+    sin = np.abs(np.sin(angle_rad))
+    new_w = int((h * sin) + (w * cos))
+    new_h = int((h * cos) + (w * sin))
     M = cv2.getRotationMatrix2D(center, angle, 1.0)
-    rotated = cv2.warpAffine(image, M, (w, h), borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
-    rotated_with_noise = fill_black_with_noise(rotated)
-    resized = cv2.resize(rotated_with_noise, (512, 512), interpolation=cv2.INTER_AREA)
-    return resized, M
+    M[0, 2] += (new_w / 2) - center[0]
+    M[1, 2] += (new_h / 2) - center[1]
+    rotated_image = cv2.warpAffine(image, M, (new_w, new_h), borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+    rotated_image = fill_black_with_noise(rotated_image)
+    scale_x = 512 / new_w
+    scale_y = 512 / new_h
+    resized_image = cv2.resize(rotated_image, (512, 512), interpolation=cv2.INTER_AREA)
+    return resized_image, M, scale_x, scale_y
+
+def transform_coordinates(coords, M, scale_x, scale_y):
+    transformed_coords = coords.copy()
+    for i in range(len(coords)):
+        x, y = coords[i, 2], coords[i, 3]
+        # Apply the rotation matrix to the coordinates
+        new_x = M[0, 0] * x + M[0, 1] * y + M[0, 2]
+        new_y = M[1, 0] * x + M[1, 1] * y + M[1, 2]
+        # Apply the scaling to the coordinates
+        new_x *= scale_x
+        new_y *= scale_y
+        transformed_coords[i, 2], transformed_coords[i, 3] = new_x, new_y
+    return transformed_coords
 
 def reflect_image(image):
     return cv2.flip(image, 1)
@@ -28,14 +50,6 @@ def reflect_coordinates(coords, width):
     reflected_coords = coords.copy()
     reflected_coords[:, 2] = width - coords[:, 2]
     return reflected_coords
-
-def transform_coordinates(coords, M):
-    transformed_coords = coords.copy()
-    for i in range(len(coords)):
-        x, y = coords[i, 2], coords[i, 3]
-        transformed_coords[i, 2] = M[0, 0] * x + M[0, 1] * y + M[0, 2]
-        transformed_coords[i, 3] = M[1, 0] * x + M[1, 1] * y + M[1, 2]
-    return transformed_coords
 
 def process_images(input_dir, output_dir):
     if not os.path.exists(output_dir):
@@ -58,7 +72,7 @@ def process_images(input_dir, output_dir):
             
             for image_file in image_files:
                 image = cv2.imread(image_file, cv2.IMREAD_GRAYSCALE)
-                rotated_image, M = rotate_image(image, angle)
+                rotated_image, M, scale_x, scale_y = rotate_image(image, angle)
                 reflected_image = reflect_image(rotated_image)
                 
                 cv2.imwrite(os.path.join(angle_dir, os.path.basename(image_file)), rotated_image)
@@ -68,7 +82,7 @@ def process_images(input_dir, output_dir):
             
             for txt_file in txt_files:
                 coords = np.loadtxt(txt_file)
-                transformed_coords = transform_coordinates(coords, M)
+                transformed_coords = transform_coordinates(coords, M, scale_x, scale_y)
                 np.savetxt(os.path.join(angle_dir, os.path.basename(txt_file)), transformed_coords, fmt='%d\t%d\t%.6f\t%.6f\t%.1f')
                 
                 reflected_coords = reflect_coordinates(transformed_coords, 512)  # assuming the image width is 512

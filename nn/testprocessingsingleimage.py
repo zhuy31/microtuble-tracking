@@ -1,65 +1,73 @@
-import os
 import cv2
 import numpy as np
 
-def normalize_image(image):
-    return image / 255.0
-
-def resize_image(image, target_size=(512, 512)):
-    return cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
-
-def denoise_image(image):
-    image = (image * 255).astype(np.uint8)  # Convert to uint8 before denoising
-    if len(image.shape) == 2:  # Grayscale image
-        return cv2.fastNlMeansDenoising(image, h=3, templateWindowSize=21, searchWindowSize=7)
-    else:
-        raise ValueError("Unsupported image format for denoising")
-
-def brighten_and_increase_contrast(image, brighten_factor=1.2, contrast_factor=1.2):
-    image = image.astype(np.float32)
-    adjusted_image = cv2.convertScaleAbs(image, alpha=contrast_factor, beta=brighten_factor * 50)
-    adjusted_image = np.clip(adjusted_image, 0, 255).astype(np.uint8)
-    return adjusted_image
-
-def preprocess_image1(image):
-    # Apply Gaussian blur to reduce noise
-    blurred_image = cv2.GaussianBlur(image, (5, 5), 0)
-    
-    # Apply adaptive thresholding
-    binary_image = cv2.adaptiveThreshold(blurred_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                         cv2.THRESH_BINARY, 11, 2)
-    
-    # Apply morphological operations to remove small noise and fill small holes
-    kernel = np.ones((3, 3), np.uint8)
-    morph_image = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel, iterations=2)
-    morph_image = cv2.morphologyEx(morph_image, cv2.MORPH_OPEN, kernel, iterations=2)
-    
-    return morph_image
-
-def preprocess_image(image, target_size=(512, 512)):
-    image = normalize_image(image)
-    image = resize_image(image, target_size)
-    image = denoise_image(image)
-    image = brighten_and_increase_contrast(image, brighten_factor=1.2, contrast_factor=3)
-    image = preprocess_image1(image)
+def fill_black_with_noise(image):
+    mask = image == 0
+    noise = np.random.normal(127, 127, image.shape).astype(np.uint8)
+    image[mask] = noise[mask]
     return image
 
-def save_preprocessed_image(image, filename):
-    cv2.imwrite(filename, image)  # Image is already in uint8 format
+def rotate_image(image, angle):
+    (h, w) = image.shape[:2]
+    center = (w // 2, h // 2)
+    angle_rad = np.deg2rad(angle)
+    cos = np.abs(np.cos(angle_rad))
+    sin = np.abs(np.sin(angle_rad))
+    new_w = int((h * sin) + (w * cos))
+    new_h = int((h * cos) + (w * sin))
+    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+    M[0, 2] += (new_w / 2) - center[0]
+    M[1, 2] += (new_h / 2) - center[1]
+    rotated_image = cv2.warpAffine(image, M, (new_w, new_h), borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+    rotated_image = fill_black_with_noise(rotated_image)
+    scale_x = 512 / new_w
+    scale_y = 512 / new_h
+    resized_image = cv2.resize(rotated_image, (512, 512), interpolation=cv2.INTER_AREA)
+    return resized_image, M, scale_x, scale_y
 
-def main():
-    paths = [["image.jpg", "output.jpg"], ["image1.jpg", "output1.jpg"], ["image2.jpg", "output2.jpg"]]
+def transform_coordinates(coords, M, scale_x, scale_y):
+    transformed_coords = coords.copy()
+    for i in range(len(coords)):
+        x, y = coords[i, 2], coords[i, 3]
+        # Apply the rotation matrix to the coordinates
+        new_x = M[0, 0] * x + M[0, 1] * y + M[0, 2]
+        new_y = M[1, 0] * x + M[1, 1] * y + M[1, 2]
+        # Apply the scaling to the coordinates
+        new_x *= scale_x
+        new_y *= scale_y
+        transformed_coords[i, 2], transformed_coords[i, 3] = new_x, new_y
+    return transformed_coords
 
-    for path in paths:
-        input_path = path[0]
-        output_path = path[1]
-        image = cv2.imread(input_path, cv2.IMREAD_GRAYSCALE)
-        if image is not None:
-            preprocessed_image = preprocess_image(image, target_size=(512, 512))
-            save_preprocessed_image(preprocessed_image, output_path)
-            print(f"Preprocessed image saved to {output_path}")
-        else:
-            print(f"Error: Unable to load image {input_path}")
+def process_single_image(image_path, txt_path, angle):
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        print(f"Error: Unable to read image from {image_path}")
+        return
+    
+    coords = np.loadtxt(txt_path)
+    if coords.size == 0:
+        print(f"Error: Unable to read coordinates from {txt_path}")
+        return
+    
+    coords = coords[coords[:, 0] == 2]  # Only use the coordinates for the second image
+    
+    rotated_image, M, scale_x, scale_y = rotate_image(image, angle)
+    transformed_coords = transform_coordinates(coords, M, scale_x, scale_y)
+    
+    # Overlay the transformed coordinates on the image
+    for coord in transformed_coords:
+        x, y = int(coord[2]), int(coord[3])
+        cv2.circle(rotated_image, (x, y), 3, (255, 0, 0), -1)
+    
+    # Display the image with coordinates overlayed
+    cv2.imshow('Transformed Image', rotated_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    # Specify the correct paths for the image and text file
+    image_path = 'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset1/MT7_30min_100x_443_453pm_1500_t0001.jpg'
+    txt_path = 'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset1/rescaled_coords.txt'
+    angle = 45  # Specify the rotation angle
+
+    process_single_image(image_path, txt_path, angle)
