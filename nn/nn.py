@@ -20,13 +20,14 @@ logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s -
 
 # Command-line arguments
 parser = argparse.ArgumentParser(description='Train a microtubule tracking model.')
-parser.add_argument('--train_image_dirs', nargs='+', required=True, help='List of directories containing training images.')
-parser.add_argument('--test_image_dirs', nargs='+', default=None, help='List of directories containing testing images (optional).')
+parser.add_argument('--data_dir', required=True, help='Directory containing folders of image sets and their corresponding annotations.')
 parser.add_argument('--batch_size', type=int, default=1, help='Batch size for training.')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of workers for data loading.')
 parser.add_argument('--num_epochs', type=int, default=20, help='Number of epochs for training.')
 parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for training.')
 parser.add_argument('--weight_decay', type=float, default=0.0001, help='Weight decay (L2 regularization).')
+parser.add_argument('--image_size', type=int, default=512, help='Size of the input images.')
+parser.add_argument('--num_points', type=int, default=300, help='Number of coordinate points to predict per frame.')
 
 args = parser.parse_args()
 
@@ -36,20 +37,24 @@ print(f"Using device: {device}")
 
 # Custom Dataset
 class MicrotubuleDataset(Dataset):
-    def __init__(self, image_dirs):
+    def __init__(self, data_dir, image_size):
         self.image_paths = []
         self.annotations = pd.DataFrame()
-      
-        for image_dir in image_dirs:
-            image_paths = sorted(glob.glob(os.path.join(image_dir, '*.jpg')))  # Ensure images are in sorted order
-            self.image_paths.extend(image_paths)
-          
-            # Automatically find the annotation file in the image directory
-            annotation_file = glob.glob(os.path.join(image_dir, '*.txt'))
-            if len(annotation_file) != 1:
-                raise FileNotFoundError(f"Expected one annotation file in directory {image_dir}, but found {len(annotation_file)}.")
-            annotation_file = annotation_file[0]
-            self.annotations = pd.concat([self.annotations, self._load_annotations(annotation_file)], ignore_index=True)
+        self.image_size = image_size
+
+        # Iterate over each subfolder in the data directory
+        for subdir in sorted(os.listdir(data_dir)):
+            image_dir = os.path.join(data_dir, subdir)
+            if os.path.isdir(image_dir):
+                image_paths = sorted(glob.glob(os.path.join(image_dir, '*.jpg')))  # Ensure images are in sorted order
+                self.image_paths.extend(image_paths)
+
+                # Automatically find the annotation file in the subfolder
+                annotation_file = glob.glob(os.path.join(image_dir, '*.txt'))
+                if len(annotation_file) != 1:
+                    raise FileNotFoundError(f"Expected one annotation file in directory {image_dir}, but found {len(annotation_file)}.")
+                annotation_file = annotation_file[0]
+                self.annotations = pd.concat([self.annotations, self._load_annotations(annotation_file)], ignore_index=True)
       
         # Skip the first frame
         self.image_paths = self.image_paths[1:]
@@ -83,7 +88,7 @@ class MicrotubuleDataset(Dataset):
             next_idx = (idx + 1) % len(self.image_paths)
             return self.__getitem__(next_idx)
       
-        image = cv2.resize(image, (512, 512))
+        image = cv2.resize(image, (self.image_size, self.image_size))
         image = image.astype(np.float32) / 255.0
         image = np.expand_dims(image, axis=0)  # Add channel dimension
       
@@ -146,44 +151,68 @@ class ConvLSTMCell(nn.Module):
         return (torch.zeros(batch_size, self.hidden_dim, height, width, device=self.conv.weight.device),
                 torch.zeros(batch_size, self.hidden_dim, height, width, device=self.conv.weight.device))
 
-# Model
+# Model with Autoencoder and ConvLSTM
 class MicrotubuleTrackingModel(nn.Module):
-    def __init__(self, num_points=300):
+    def __init__(self, image_size=512, num_points=300):
         super(MicrotubuleTrackingModel, self).__init__()
         self.num_points = num_points
+        self.image_size = image_size
+
+        # Encoder
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 8, kernel_size=3, stride=2, padding=1),  # (image_size/2, image_size/2)
+            nn.ReLU(True),
+            nn.Conv2d(8, 16, kernel_size=3, stride=2, padding=1),  # (image_size/4, image_size/4)
+            nn.ReLU(True)
+        )
+      
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(16, 8, kernel_size=3, stride=2, padding=1, output_padding=1),  # (image_size/2, image_size/2)
+            nn.ReLU(True),
+            nn.ConvTranspose2d(8, 1, kernel_size=3, stride=2, padding=1, output_padding=1),  # (image_size, image_size)
+            nn.ReLU(True)
+        )
+      
+        # Convolutional layer with slight pooling
         self.conv1 = nn.Conv2d(1, 8, kernel_size=3, stride=1, padding=1)
         self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        self.conv2 = nn.Conv2d(8, 16, kernel_size=3, stride=1, padding=1)
-        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
-        self.dropout = nn.Dropout(0.5)
       
-        self.convlstm = ConvLSTMCell(input_dim=16, hidden_dim=16, kernel_size=(3, 3), bias=True)
-        self.fc = nn.Linear(16 * 128 * 128, 2 * self.num_points)  # Output layer to predict multiple x, y coordinates
+        # ConvLSTM layer
+        self.convlstm = ConvLSTMCell(input_dim=8, hidden_dim=16, kernel_size=(3, 3), bias=True)
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2, padding=0)
+      
+        # Fully connected layer
+        self.fc = nn.Linear(16 * (image_size // 8) * (image_size // 8), 2 * self.num_points)  # Output layer to predict multiple x, y coordinates
   
     def forward(self, x):
         batch_size, seq_len, c, h, w = x.size()  # include seq_len dimension
 
+        # Autoencoder
         x = x.view(-1, c, h, w)  # reshape to (batch_size * seq_len, c, h, w)
-        x = self.pool1(torch.relu(self.conv1(x)))
-        x = self.pool2(torch.relu(self.conv2(x)))
-        x = self.dropout(x)
-        x = x.view(batch_size, seq_len, 16, h // 4, w // 4)  # reshape back to (batch_size, seq_len, 16, h/4, w/4)
+        x = self.encoder(x)
+        x = self.decoder(x)
+        x = x.view(batch_size, seq_len, 1, self.image_size, self.image_size)  # reshape back to (batch_size, seq_len, 1, image_size, image_size)
 
-        # Initialize hidden state and cell state for ConvLSTM
-        h, c = self.convlstm.init_hidden(batch_size, (x.size(3), x.size(4)))
+        # Convolutional layer with slight pooling
+        x = x.view(-1, 1, self.image_size, self.image_size)  # reshape to (batch_size * seq_len, 1, image_size, image_size)
+        x = self.pool1(torch.relu(self.conv1(x)))
+        x = x.view(batch_size, seq_len, 8, self.image_size // 2, self.image_size // 2)  # reshape back to (batch_size, seq_len, 8, image_size/2, image_size/2)
+
+        # ConvLSTM layer
+        h, c = self.convlstm.init_hidden(batch_size, (self.image_size // 2, self.image_size // 2))
         output_inner = []
         for t in range(seq_len):
             h, c = self.convlstm(x[:, t, :, :, :], [h, c])  # pass each timestep through ConvLSTM
             output_inner.append(h)
 
         x = torch.stack(output_inner, dim=1)  # (batch_size, seq_len, hidden_dim, h, w)
-        x = x[:, -1, :, :, :]  # take the output of the last timestep
+        x = self.pool2(x[:, -1, :, :, :])  # take the output of the last timestep and apply pooling
         x = x.view(batch_size, -1)  # flatten the output for the fully connected layer
 
         x = self.fc(x)
         return x.view(batch_size, self.num_points, 2)  # reshape to (batch_size, num_points, 2)
 
-# Custom loss function using Hungarian algorithm for optimal matching
 # Custom loss function using Hungarian algorithm for optimal matching
 def custom_loss_function(predicted_coords, true_coords):
     batch_size, num_points, _ = predicted_coords.size()
@@ -214,7 +243,6 @@ def custom_loss_function(predicted_coords, true_coords):
         total_loss += frame_loss
   
     return total_loss / batch_size
-
 
 def train(model, dataloader, criterion, optimizer, num_epochs=20, view_last_epoch=False):
     scaler = torch.cuda.amp.GradScaler()  # For mixed precision
@@ -270,35 +298,20 @@ def test(model, dataloader, criterion):
 # Main
 if __name__ == "__main__":
     try:
-        train_image_dirs = args.train_image_dirs
-        train_dataset = MicrotubuleDataset(train_image_dirs)
-      
-        if args.test_image_dirs:
-            test_image_dirs = args.test_image_dirs
-            test_dataset = MicrotubuleDataset(test_image_dirs)
-        else:
-            test_dataset = None
+        data_dir = args.data_dir
+        dataset = MicrotubuleDataset(data_dir, args.image_size)
     except FileNotFoundError as e:
         print(f"File not found: {e}. Exiting.")
         exit(1)
 
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=custom_collate_fn)
-
-    if test_dataset:
-        test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
-    else:
-        test_dataloader = None
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=custom_collate_fn)
 
     torch.cuda.empty_cache()  # Clear GPU memory before training
 
-    model = MicrotubuleTrackingModel().to(device)
+    model = MicrotubuleTrackingModel(image_size=args.image_size, num_points=args.num_points).to(device)
     criterion = custom_loss_function
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
-    train(model, train_dataloader, criterion, optimizer, num_epochs=args.num_epochs, view_last_epoch=True)
+    train(model, dataloader, criterion, optimizer, num_epochs=args.num_epochs, view_last_epoch=True)
 
-    if test_dataloader:
-        test(model, test_dataloader, criterion)
-
-
-
+    test(model, dataloader, criterion)

@@ -21,18 +21,27 @@ def brighten_and_increase_contrast(image, brighten_factor=1.2, contrast_factor=1
     adjusted_image = np.clip(adjusted_image, 0, 255).astype(np.uint8)
     return adjusted_image
 
-def equalize_histogram(image):
-    if len(image.shape) == 2:  # Grayscale image
-        return cv2.equalizeHist(image)
-    else:
-        raise ValueError("Unsupported image format for histogram equalization")
+def preprocess_image1(image):
+    # Apply Gaussian blur to reduce noise
+    blurred_image = cv2.GaussianBlur(image, (5, 5), 0)
+    
+    # Apply adaptive thresholding
+    binary_image = cv2.adaptiveThreshold(blurred_image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                         cv2.THRESH_BINARY, 11, 2)
+    
+    # Apply morphological operations to remove small noise and fill small holes
+    kernel = np.ones((3, 3), np.uint8)
+    morph_image = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel, iterations=2)
+    morph_image = cv2.morphologyEx(morph_image, cv2.MORPH_OPEN, kernel, iterations=2)
+    
+    return morph_image
 
 def preprocess_image(image, target_size=(512, 512)):
     image = normalize_image(image)
     image = resize_image(image, target_size)
     image = denoise_image(image)
     image = brighten_and_increase_contrast(image, brighten_factor=1.2, contrast_factor=3)
-
+    image = preprocess_image1(image)
     return image
 
 def save_preprocessed_image(image, filename):

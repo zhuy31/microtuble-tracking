@@ -72,6 +72,16 @@ def preprocess_images_in_directory(input_directory, output_directory, bbox, orig
 
             pbar.update(1)
 
+def rotate_coordinates(x, y, angle, img_width, img_height):
+    if angle == 90:
+        return img_height - y, x
+    elif angle == 180:
+        return img_width - x, img_height - y
+    elif angle == 270:
+        return y, img_width - x
+    else:
+        return x, y
+
 def rescale_coordinates(coords, original_size, target_size=(512, 512)):
     scale_x = target_size[0] / original_size[1]
     scale_y = target_size[1] / original_size[0]
@@ -80,6 +90,24 @@ def rescale_coordinates(coords, original_size, target_size=(512, 512)):
         frame, coord_num, x, y, val = coord
         new_x = x * scale_x
         new_y = y * scale_y
+        rescaled_coords.append((frame, coord_num, new_x, new_y, val))
+    return rescaled_coords
+
+def rescale_coordinates_bbox(coords, bbox, target_size=(512, 512)):
+    bbox_x, bbox_y, bbox_w, bbox_h = bbox
+    scale_x = target_size[0] / bbox_w
+    scale_y = target_size[1] / bbox_h
+    rescaled_coords = []
+    for coord in coords:
+        frame, coord_num, x, y, val = coord
+        # Translate coordinates based on the bounding box
+        x = x - bbox_x
+        y = y - bbox_y
+        # Scale coordinates
+        new_x = x * scale_x
+        new_y = y * scale_y
+        if new_x > 512:
+            print(new_x)
         rescaled_coords.append((frame, coord_num, new_x, new_y, val))
     return rescaled_coords
 
@@ -101,12 +129,14 @@ def main():
     parser.add_argument('--input_dir', type=str, required=True, help='Directory containing input images.')
     parser.add_argument('--output_dir', type=str, required=True, help='Directory to save preprocessed images.')
     parser.add_argument('--coords_file', type=str, required=True, help='File containing coordinates for training data.')
+    parser.add_argument('--rotation_angle', type=int, default=0, help='Angle to rotate coordinates (0, 90, 180, 270)')
 
     args = parser.parse_args()
 
     input_directory = args.input_dir
     output_directory = args.output_dir
     coords_file = args.coords_file
+    rotation_angle = args.rotation_angle
 
     # Display the first and last frame and let the user select a bounding box
     filenames = sorted([f for f in os.listdir(input_directory)
@@ -151,8 +181,8 @@ def main():
                     original_size = first_image.shape if first_image is not None else (512, 512)
 
                     coords = read_coordinates(coords_file)
-                    rescaled_coords = rescale_coordinates(coords, original_size, target_size=(512, 512))
-
+                    coords = rescale_coordinates(coords,original_size=original_size,target_size=(512,512))
+                    rescaled_coords = rescale_coordinates_bbox(coords, (x, y, w, h), target_size=(512, 512))
                     output_coords_file = os.path.join(output_directory, 'rescaled_coords.txt')
                     with open(output_coords_file, 'w') as file:
                         for coord in rescaled_coords:

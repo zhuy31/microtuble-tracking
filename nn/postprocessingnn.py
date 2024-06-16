@@ -1,80 +1,86 @@
 import os
+import shutil
 import cv2
 import numpy as np
-import torch
 import argparse
-from torchvision import transforms
+from glob import glob
+from tqdm import tqdm
 
-def process_image(image, device, rotation_step=10):
-    transformed_images = []
+def fill_black_with_noise(image):
+    mask = image == 0
+    noise = np.random.normal(127, 127, image.shape).astype(np.uint8)
+    image[mask] = noise[mask]
+    return image
 
-    # Convert image to PyTorch tensor
-    image_tensor = transforms.ToTensor()(image).unsqueeze(0).to(device)
+def rotate_image(image, angle):
+    (h, w) = image.shape[:2]
+    center = (w // 2, h // 2)
+    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+    rotated = cv2.warpAffine(image, M, (w, h), borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+    rotated_with_noise = fill_black_with_noise(rotated)
+    resized = cv2.resize(rotated_with_noise, (512, 512), interpolation=cv2.INTER_AREA)
+    return resized, M
 
-    # Apply rotations at specified intervals
-    for angle in range(0, 360, rotation_step):
-        rotation_matrix = cv2.getRotationMatrix2D((256, 256), angle, 1.0)
-        rotated_image = cv2.warpAffine(image, rotation_matrix, (512, 512), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-        transformed_images.append(rotated_image)
-    
-    # Apply other transformations
-    for image in transformed_images.copy():
-        # Scaling (Zoom in/out)
-        for scale in [0.8, 1.2]:
-            scaled_image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
-            scaled_image = cv2.copyMakeBorder(scaled_image, 
-                                              top=(512-scaled_image.shape[0])//2, 
-                                              bottom=(512-scaled_image.shape[0])//2, 
-                                              left=(512-scaled_image.shape[1])//2, 
-                                              right=(512-scaled_image.shape[1])//2, 
-                                              borderType=cv2.BORDER_CONSTANT, value=0)
-            transformed_images.append(scaled_image[:512, :512])
+def reflect_image(image):
+    return cv2.flip(image, 1)
 
-        # Translation (Shift)
-        for shift in [20, -20]:
-            M = np.float32([[1, 0, shift], [0, 1, shift]])
-            translated_image = cv2.warpAffine(image, M, (512, 512), borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-            transformed_images.append(translated_image)
+def reflect_coordinates(coords, width):
+    reflected_coords = coords.copy()
+    reflected_coords[:, 2] = width - coords[:, 2]
+    return reflected_coords
 
-        # Horizontal and Vertical Flips
-        flipped_image_h = cv2.flip(image, 1)
-        transformed_images.append(flipped_image_h)
+def transform_coordinates(coords, M):
+    transformed_coords = coords.copy()
+    for i in range(len(coords)):
+        x, y = coords[i, 2], coords[i, 3]
+        transformed_coords[i, 2] = M[0, 0] * x + M[0, 1] * y + M[0, 2]
+        transformed_coords[i, 3] = M[1, 0] * x + M[1, 1] * y + M[1, 2]
+    return transformed_coords
 
-        flipped_image_v = cv2.flip(image, 0)
-        transformed_images.append(flipped_image_v)
-
-    return transformed_images
-
-def process_images_in_directory(input_dir, output_dir, device, rotation_step):
+def process_images(input_dir, output_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     
-    for filename in os.listdir(input_dir):
-        if filename.endswith(".png") or filename.endswith(".jpg"):
-            img_path = os.path.join(input_dir, filename)
-            image = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+    image_sets = [f.path for f in os.scandir(input_dir) if f.is_dir()]
+    
+    for image_set in image_sets:
+        image_files = glob(os.path.join(image_set, "*.jpg"))
+        txt_files = glob(os.path.join(image_set, "*.txt"))
+        
+        total_files = len(image_files) * 36 * 2  # 36 rotations * 2 (original and reflected)
+        progress = tqdm(total=total_files, desc=f'Processing {os.path.basename(image_set)}')
+        
+        for angle in range(0, 360, 20):
+            angle_dir = os.path.join(output_dir, os.path.basename(image_set) + f'_{angle}deg')
+            angle_reflected_dir = os.path.join(output_dir, os.path.basename(image_set) + f'_{angle}deg_reflected')
+            os.makedirs(angle_dir, exist_ok=True)
+            os.makedirs(angle_reflected_dir, exist_ok=True)
             
-            # Process the image
-            processed_images = process_image(image, device, rotation_step)
+            for image_file in image_files:
+                image = cv2.imread(image_file, cv2.IMREAD_GRAYSCALE)
+                rotated_image, M = rotate_image(image, angle)
+                reflected_image = reflect_image(rotated_image)
+                
+                cv2.imwrite(os.path.join(angle_dir, os.path.basename(image_file)), rotated_image)
+                cv2.imwrite(os.path.join(angle_reflected_dir, os.path.basename(image_file)), reflected_image)
+                
+                progress.update(2)
             
-            # Save processed images
-            base_filename, ext = os.path.splitext(filename)
-            for i, processed_image in enumerate(processed_images):
-                output_path = os.path.join(output_dir, f"{base_filename}_transformed_{i}{ext}")
-                cv2.imwrite(output_path, processed_image)
-
-def main():
-    parser = argparse.ArgumentParser(description="Process grayscale, time-series, 512x512 images of microtubules.")
-    parser.add_argument("input_dir", type=str, help="Directory of input images")
-    parser.add_argument("output_dir", type=str, help="Directory to save processed images")
-    parser.add_argument("--use_gpu", action="store_true", help="Use GPU for processing if available")
-    parser.add_argument("--rotation_step", type=int, default=10, help="Step size for rotations in degrees (default is 10)")
-    args = parser.parse_args()
-
-    device = torch.device("cuda" if args.use_gpu and torch.cuda.is_available() else "cpu")
-    process_images_in_directory(args.input_dir, args.output_dir, device, args.rotation_step)
+            for txt_file in txt_files:
+                coords = np.loadtxt(txt_file)
+                transformed_coords = transform_coordinates(coords, M)
+                np.savetxt(os.path.join(angle_dir, os.path.basename(txt_file)), transformed_coords, fmt='%d\t%d\t%.6f\t%.6f\t%.1f')
+                
+                reflected_coords = reflect_coordinates(transformed_coords, 512)  # assuming the image width is 512
+                np.savetxt(os.path.join(angle_reflected_dir, os.path.basename(txt_file)), reflected_coords, fmt='%d\t%d\t%.6f\t%.6f\t%.1f')
+        
+        progress.close()
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Process some images.')
+    parser.add_argument('--input_dir', type=str, required=True, help='Input directory containing image sets')
+    parser.add_argument('--output_dir', type=str, required=True, help='Output directory for processed images')
 
+    args = parser.parse_args()
 
+    process_images(args.input_dir, args.output_dir)
