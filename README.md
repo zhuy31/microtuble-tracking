@@ -28,7 +28,7 @@ c:/Users/Jackson/Documents/GitHub/microtuble-tracking/nn/postprocessingnn.py --i
 **Training Neural Network**
 
 ```
-C:/Users/Jackson/AppData/Local/Programs/Python/Python312/python.exe c:/Users/Jackson/Documents/GitHub/microtuble-tracking/nn/nn.py --data_dir C:\Users\Jackson\Documents\mt_data\postprocessed --batch-size 1 --num_workers 4 --num_epochs 20
+C:/Users/Jackson/AppData/Local/Programs/Python/Python312/python.exe c:/Users/Jackson/Documents/GitHub/microtuble-tracking/nn/nn.py --data_dir C:\Users\Jackson\Documents\mt_data\postprocessed --batch_size 1 --num_workers 4 --num_epochs 20
 ```
 
 **Running Neural Network**

@@ -51,7 +51,7 @@ def reflect_coordinates(coords, width):
     reflected_coords[:, 2] = width - coords[:, 2]
     return reflected_coords
 
-def process_images(input_dir, output_dir):
+def process_images(input_dir, output_dir, angle_unit):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     
@@ -61,10 +61,10 @@ def process_images(input_dir, output_dir):
         image_files = glob(os.path.join(image_set, "*.jpg"))
         txt_files = glob(os.path.join(image_set, "*.txt"))
         
-        total_files = len(image_files) * 36 * 2  # 36 rotations * 2 (original and reflected)
+        total_files = len(image_files) * int(360/angle_unit) * 2  
         progress = tqdm(total=total_files, desc=f'Processing {os.path.basename(image_set)}')
         
-        for angle in range(0, 360, 20):
+        for angle in range(0, 360, angle_unit):
             angle_dir = os.path.join(output_dir, os.path.basename(image_set) + f'_{angle}deg')
             angle_reflected_dir = os.path.join(output_dir, os.path.basename(image_set) + f'_{angle}deg_reflected')
             os.makedirs(angle_dir, exist_ok=True)
@@ -94,7 +94,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process some images.')
     parser.add_argument('--input_dir', type=str, required=True, help='Input directory containing image sets')
     parser.add_argument('--output_dir', type=str, required=True, help='Output directory for processed images')
-
+    parser.add_argument('--angle_unit', type=int, default=20, help='Number of coordinate points to predict per frame.')
     args = parser.parse_args()
-
-    process_images(args.input_dir, args.output_dir)
+    
+    process_images(args.input_dir, args.output_dir, args.angle_unit)

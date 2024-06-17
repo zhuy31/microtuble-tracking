@@ -24,12 +24,6 @@ def brighten_and_increase_contrast(image, brighten_factor=1.2, contrast_factor=1
     adjusted_image = np.clip(adjusted_image, 0, 255).astype(np.uint8)
     return adjusted_image
 
-def equalize_histogram(image):
-    if len(image.shape) == 2:  # Grayscale image
-        return cv2.equalizeHist(image)
-    else:
-        raise ValueError("Unsupported image format for histogram equalization")
-
 def preprocess_image(image, target_size=(512, 512)):
     image = normalize_image(image)
     image = resize_image(image, target_size)
@@ -50,6 +44,9 @@ def preprocess_images_in_directory(input_directory, output_directory, bbox, orig
 
     filenames = sorted([f for f in os.listdir(input_directory)
                         if f.endswith('.png') or f.endswith('.jpg') or f.endswith('.jpeg')])
+
+    # Exclude the first frame
+    filenames = filenames[1:]
 
     with tqdm(total=len(filenames), desc='Processing images') as pbar:
         for filename in filenames:
@@ -143,7 +140,8 @@ def main():
                         if f.endswith('.png') or f.endswith('.jpg') or f.endswith('.jpeg')])
 
     if len(filenames) >= 2:
-        first_image_path = os.path.join(input_directory, filenames[0])
+        # Skip the first frame
+        first_image_path = os.path.join(input_directory, filenames[1])
         last_image_path = os.path.join(input_directory, filenames[-1])
 
         first_image = cv2.imread(first_image_path, cv2.IMREAD_GRAYSCALE)
@@ -181,7 +179,9 @@ def main():
                     original_size = first_image.shape if first_image is not None else (512, 512)
 
                     coords = read_coordinates(coords_file)
-                    coords = rescale_coordinates(coords,original_size=original_size,target_size=(512,512))
+                    # Filter out coordinates belonging to the first frame
+                    coords = [coord for coord in coords if coord[0] != 1]
+                    coords = rescale_coordinates(coords, original_size=original_size, target_size=(512, 512))
                     rescaled_coords = rescale_coordinates_bbox(coords, (x, y, w, h), target_size=(512, 512))
                     output_coords_file = os.path.join(output_directory, 'rescaled_coords.txt')
                     with open(output_coords_file, 'w') as file:
