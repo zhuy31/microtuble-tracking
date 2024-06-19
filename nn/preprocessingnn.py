@@ -87,7 +87,7 @@ def rescale_coordinates(coords, original_size, target_size=(512, 512)):
         frame, coord_num, x, y, val = coord
         new_x = x * scale_x
         new_y = y * scale_y
-        rescaled_coords.append((frame, coord_num, new_x, new_y, val))
+        rescaled_coords.append((frame-1, coord_num, new_x, new_y, val))
     return rescaled_coords
 
 def rescale_coordinates_bbox(coords, bbox, target_size=(512, 512)):
