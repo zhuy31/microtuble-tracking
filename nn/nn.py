@@ -13,6 +13,7 @@ import argparse
 from scipy.optimize import linear_sum_assignment
 import matplotlib.pyplot as plt
 import warnings
+import torch.optim.lr_scheduler as lr_scheduler
 warnings.filterwarnings("ignore", message="Applied workaround for CuDNN issue, install nvrtc.so")
 
 # Configure logging
@@ -200,7 +201,7 @@ class MicrotubuleTrackingModel(nn.Module):
 
         return x
 
-# Custom loss function using Hungarian algorithm for optimal matching
+# Custom loss function using Hungarian algorithm for optimal matching and MSE calculation
 def custom_loss_function(predicted_coords, true_coords):
     batch_size, num_points, _ = predicted_coords.size()
     total_loss = 0
@@ -233,16 +234,12 @@ def custom_loss_function(predicted_coords, true_coords):
     return total_loss / batch_size
 
 
-
-
-def train(model, dataloader, criterion, optimizer, num_epochs=20, view_last_epoch=False):
+def train(model, dataloader, criterion, optimizer, scheduler, num_epochs=20, view_last_epoch=False):
     scaler = torch.cuda.amp.GradScaler()  # For mixed precision
     middle_frame_image = None
     middle_frame_pred_coords = None
     middle_frame_true_coords = None
-    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=3, factor=0.5)
-
+    
     for epoch in range(num_epochs):
         model.train()
         epoch_loss = 0
@@ -256,9 +253,14 @@ def train(model, dataloader, criterion, optimizer, num_epochs=20, view_last_epoc
             scaler.step(optimizer)
             scaler.update()
             epoch_loss += loss.item()
-
+          
+            # Save the middle frame data during each epoch
+            if batch_idx == len(dataloader) // 2:
+                middle_frame_image = images[0].cpu().numpy().squeeze()
+                middle_frame_pred_coords = outputs[0].cpu().detach().numpy()
+                middle_frame_true_coords = coords[0].cpu().numpy()
+        scheduler.step(epoch_loss/len(dataloader))
         print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss/len(dataloader)}')
-        scheduler.step(epoch_loss/len(dataloader))  # Adjust learning rate based on epoch loss
 
         # Save the plot each epoch
         if middle_frame_image is not None:
@@ -274,9 +276,8 @@ def train(model, dataloader, criterion, optimizer, num_epochs=20, view_last_epoc
 
         
         # Save the model every epoch
-        torch.save(model.state_dict(), "microtubule_tracking_model.pth")
-        print("Model saved as microtubule_tracking_model.pth")
-
+    torch.save(model.state_dict(), "microtubule_tracking_model.pth")
+    print("Model saved as microtubule_tracking_model.pth")
 
 
 # Testing function
@@ -297,6 +298,12 @@ if __name__ == "__main__":
         data_dir = args.data_dir
         train_image_dirs = [d for d in glob.glob(os.path.join(data_dir, '*')) if os.path.isdir(d)]
 
+        model = MicrotubuleTrackingModel().to(device)
+        model_path = 'microtubule_tracking_model.pth'
+        if os.path.exists(model_path):
+            model.load_state_dict(torch.load(model_path))
+            print(f"Loaded model from {model_path}")
+
         # Loop through each directory separately to train the model sequentially
         for train_image_dir in train_image_dirs:
             train_dataset = MicrotubuleDataset([train_image_dir])
@@ -307,11 +314,11 @@ if __name__ == "__main__":
             model = MicrotubuleTrackingModel().to(device)
             criterion = custom_loss_function
             optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
-
-            train(model, train_dataloader, criterion, optimizer, num_epochs=args.num_epochs, view_last_epoch=True)
+            scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+            train(model, train_dataloader, criterion, optimizer, scheduler, num_epochs=args.num_epochs, view_last_epoch=True)
 
             # Save model after training on each dataset
-            torch.save(model.state_dict(), f'model_after_{os.path.basename(train_image_dir)}.pth')
+            torch.save(model.state_dict(), f'model.pth')
 
             # Optionally, test the model on a separate test dataset after training on each dataset
             if args.test_image_dirs:
