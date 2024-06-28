@@ -1,6 +1,3 @@
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning, message="indexing with dtype torch.uint8 is now deprecated, please use a dtype torch.bool instead")
-
 import os
 import numpy as np
 import cv2
@@ -11,8 +8,6 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from e2cnn import gspaces
-from e2cnn import nn as e2nn
 
 # Define the maximum number of coordinates
 MAX_COORDS = 400
@@ -28,7 +23,8 @@ class MicrotubuleDataset(Dataset):
     def _load_data(self):
         print(f"Loading data from {self.data_dir}")
         subfolders = [f for f in os.listdir(self.data_dir) if os.path.isdir(os.path.join(self.data_dir, f))]
-        
+        subfolders = subfolders
+        print("subfolders: {subfolders}")
         for subfolder in tqdm(subfolders, desc="Loading subfolders"):
             subfolder_path = os.path.join(self.data_dir, subfolder)
             # Load images
@@ -49,7 +45,7 @@ class MicrotubuleDataset(Dataset):
                         if len(parts) >= 4:
                             coords.append([float(parts[2]), float(parts[3])])
                 
-                self.image_paths.extend(sorted(images))
+                self.image_paths.extend(images)
                 self.coordinates.extend([coords] * len(images))
         
         print(f"Total images loaded: {len(self.image_paths)}")
@@ -76,48 +72,38 @@ class MicrotubuleDataset(Dataset):
 
         return image, coords
 
-class EquivariantVAE(nn.Module):
+class VAE(nn.Module):
     def __init__(self):
-        super(EquivariantVAE, self).__init__()
-        
-        # Define the rotation group
-        r2_act = gspaces.Rot2dOnR2(N=8)
-        
-        # Encoder
-        self.input_type = e2nn.FieldType(r2_act, 1*[r2_act.trivial_repr])
-        self.conv1 = e2nn.R2Conv(self.input_type, e2nn.FieldType(r2_act, 32*[r2_act.regular_repr]), kernel_size=3, padding=1)
-        self.relu1 = e2nn.ReLU(self.conv1.out_type)
-        self.conv2 = e2nn.R2Conv(self.conv1.out_type, e2nn.FieldType(r2_act, 64*[r2_act.regular_repr]), kernel_size=3, padding=1)
-        self.relu2 = e2nn.ReLU(self.conv2.out_type)
-        self.conv3 = e2nn.R2Conv(self.conv2.out_type, e2nn.FieldType(r2_act, 128*[r2_act.regular_repr]), kernel_size=3, padding=1)
-        self.relu3 = e2nn.ReLU(self.conv3.out_type)
-        self.conv4 = e2nn.R2Conv(self.conv3.out_type, e2nn.FieldType(r2_act, 256*[r2_act.regular_repr]), kernel_size=3, padding=1)
-        self.relu4 = e2nn.ReLU(self.conv4.out_type)
-        
-        # Fully connected layers
+        super(VAE, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv2d(1, 32, 4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, 4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(64, 128, 4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(128, 256, 4, stride=2, padding=1),
+            nn.ReLU(),
+        )
         self.fc_mu = nn.Linear(256 * 32 * 32, 512)
         self.fc_logvar = nn.Linear(256 * 32 * 32, 512)
         self.fc_decode = nn.Linear(512, 256 * 32 * 32)
-        
-        # Decoder
-        self.convT1 = nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1)
-        self.convT2 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)
-        self.convT3 = nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1)
-        self.convT4 = nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1)
-        self.sigmoid = nn.Sigmoid()
-        
-        # Coordinate prediction
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.ConvTranspose2d(32, 1, 4, stride=2, padding=1),
+            nn.Sigmoid(),
+        )
         self.fc_coords = nn.Linear(512, MAX_COORDS * 2)  # Produces MAX_COORDS coordinate pairs
 
     def encode(self, x):
-        x = e2nn.GeometricTensor(x, self.input_type)
-        x = self.relu1(self.conv1(x))
-        x = self.relu2(self.conv2(x))
-        x = self.relu3(self.conv3(x))
-        x = self.relu4(self.conv4(x))
-        x = x.tensor.view(x.tensor.size(0), -1)
-        print("Shape before fully connected layers:", x.shape)  # Debugging line
-        return self.fc_mu(x), self.fc_logvar(x)
+        h = self.encoder(x)
+        h = h.view(h.size(0), -1)
+        return self.fc_mu(h), self.fc_logvar(h)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -125,10 +111,9 @@ class EquivariantVAE(nn.Module):
         return mu + eps * std
 
     def decode(self, z):
-        z = self.fc_decode(z)
-        z = z.view(z.size(0), 256, 32, 32)
-        z = self.sigmoid(self.convT4(self.convT3(self.convT2(self.convT1(z)))))
-        return z
+        h = self.fc_decode(z)
+        h = h.view(h.size(0), 256, 32, 32)
+        return self.decoder(h)
 
     def forward(self, x):
         mu, logvar = self.encode(x)
@@ -143,10 +128,37 @@ def loss_function(recon_x, x, coords, target_coords, mu, logvar):
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     return BCE + MSE + KLD
 
+
+def plot_and_save_image(image, true_coords, pred_coords, epoch, filename, output_dir='output_images'):
+    # Ensure the output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    plt.figure(figsize=(8, 8))
+    plt.imshow(image.squeeze(), cmap='gray')
+    
+    true_coords = true_coords.cpu().numpy()
+    pred_coords = pred_coords.cpu().detach().numpy()
+    
+    # Plot true coordinates
+    plt.scatter(true_coords[:, 0], true_coords[:, 1], c='blue', label='True Coordinates', s=5)
+    # Plot predicted coordinates
+    plt.scatter(pred_coords[:, 0], pred_coords[:, 1], c='red', label='Predicted Coordinates', s=5)
+    
+    plt.legend()
+    plt.title(f'Epoch {epoch + 1}')
+    
+    output_path = os.path.join(output_dir, f'epoch_{epoch + 1}_{filename}.png')
+    plt.savefig(output_path)
+    plt.close()
+
 def train(model, dataloader, optimizer, epochs=10):
     model.train()
     for epoch in range(epochs):
         train_loss = 0
+        last_data = None
+        last_target_coords = None
+        last_coords = None
+        last_filename = None
         with tqdm(total=len(dataloader), desc=f"Epoch {epoch + 1}") as pbar:
             for batch_idx, (data, target_coords) in enumerate(dataloader):
                 data = data.float() / 255.0  # Normalize
@@ -160,17 +172,22 @@ def train(model, dataloader, optimizer, epochs=10):
                 train_loss += loss.item()
                 optimizer.step()
                 pbar.update(1)
+                
+                # Save last batch data for visualization
+                last_data = data[-1].cpu()  # Save the last image in the batch
+                last_target_coords = target_coords[-1].cpu()  # Save the corresponding target coordinates
+                last_coords = coords[-1].cpu()  # Save the corresponding predicted coordinates
+                last_filename = os.path.basename(dataloader.dataset.image_paths[batch_idx * data.size(0) + (data.size(0) - 1)])
 
         print(f'Epoch {epoch + 1}, Loss: {train_loss / len(dataloader.dataset)}')
         
-    # Save the model after training
-    model_save_path = 'equivariant_vae_model.pth'
-    torch.save(model.state_dict(), model_save_path)
-    print(f"Model saved to {model_save_path}")
+        # Plot and save the image with coordinates overlayed
+        plot_and_save_image(last_data, last_target_coords, last_coords, epoch, last_filename)
+
 
 def main():
     data_dir = 'C:/Users/Jackson/Documents/mt_data/preprocessed'  # Replace with your data directory
-    batch_size = 16
+    batch_size = 32
     learning_rate = 1e-3
     epochs = 10
     num_workers = 4  # Number of worker processes for data loading
@@ -182,7 +199,7 @@ def main():
     dataset = MicrotubuleDataset(data_dir, transform=transform)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-    model = EquivariantVAE().cuda() if torch.cuda.is_available() else EquivariantVAE()
+    model = VAE().cuda() if torch.cuda.is_available() else VAE()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     train(model, dataloader, optimizer, epochs=epochs)
