@@ -3,19 +3,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import tqdm
-
+from concurrent.futures import ThreadPoolExecutor
 bbox_start = (0, 0)
 dragging = False
 bbox = None
 combined_image = None
 img_width = 0
 
-def crop_image(image, bbox, display_size = 1024):
-    x, y, w, h = bbox
-    x, w = x*image.shape[0]/display_size, w*image.shape[0]/display_size
-    y, h = y*image.shape[0]/display_size, h*image.shape[0]/display_size
-    x, y, w, h = int(x), int(y), int(w), int(h)
-    return image[y:y+h, x:x+w]
+def crop_image(original_image, bbox, display_size=1024):
+    scale_x = original_image.shape[1] / display_size
+    scale_y = original_image.shape[0] / display_size
+    x, y, w, h = [int(coord * scale) for coord, scale in zip(bbox, [scale_x, scale_y, scale_x, scale_y])]
+    return original_image[y:y+h, x:x+w]
+
 
 def save_preprocessed_image(image, filename):
     if(len(image.shape) == 3):
@@ -132,7 +132,7 @@ def plot_images_side_by_side(images, titles=None):
     plt.tight_layout()
     plt.show()
 
-def sample_images_from_folder(directory, target_size=(1024, 1024)):
+def sample_images_from_folder(directory, target_size=(1024, 1024), end=False):
     image_files = sorted([f for f in os.listdir(directory) if f.endswith('.jpg')])
 
     if len(image_files) < 5:
@@ -144,49 +144,111 @@ def sample_images_from_folder(directory, target_size=(1024, 1024)):
 
     images = [cv2.imread(os.path.join(directory, img)) for img in selected_images]
 
-    cropped_images, selected_bbox = display_and_select_bounding_boxes(images, target_size=target_size)
+    if end is False:
+        cropped_images, selected_bbox = display_and_select_bounding_boxes(images, target_size=target_size)
+        
     if cropped_images:
         plot_images_side_by_side(cropped_images, titles=selected_images)
         cv2.waitKey(0)
     return target_size[0]
 
-def preprocess_images_in_directory(input_directory, output_directory, bbox, target_size=(256, 256), test_dir=None, display_size = 1024):
+def read_coordinates(filename):
+    with open(filename, 'r') as file:
+        lines = file.readlines()
+    coords = []
+    for line in lines:
+        if line.startswith('#') or line.strip() == '':
+            continue
+        parts = line.split()
+        if len(parts) == 5:
+            frame, coord_num, x, y, val = map(float, parts)
+            coords.append((int(frame), int(coord_num), x, y, val))
+        else:
+            print(f"Skipping invalid line: {line.strip()}")
+    return coords
+
+def crop_and_rescale_coordinates(image, bbox, coords, display_size=1024, target_size=(256, 256)):
+    scale_x = image.shape[1] / display_size
+    scale_y = image.shape[0] / display_size
+    x, y, w, h = [int(coord * scale) for coord, scale in zip(bbox, [scale_x, scale_y, scale_x, scale_y])]
+    cropped_image = image[y:y+h, x:x+w]
+    rescale_x = target_size[0] / w
+    rescale_y = target_size[1] / h
+    rescaled_coords = [(frame, coord_num, (x_coord - x) * rescale_x, (y_coord - y) * rescale_y, val)
+                       for frame, coord_num, x_coord, y_coord, val in coords]
+    return cropped_image, rescaled_coords
+
+def process_single_image(input_path, output_path, output_directory, coords, bbox, target_size, display_size, test_dir=None):
+    image = cv2.imread(input_path)
+    if image is not None:
+        cropped_image, rescaled_coords = crop_and_rescale_coordinates(image, bbox, coords, display_size=display_size, target_size=target_size)
+        preprocessed_image = preprocess_image(cropped_image, target_size)
+        if test_dir is not None:
+            test_output_path = os.path.join(test_dir, os.path.basename(output_path))
+            cv2.imwrite(test_output_path, resize_image(cropped_image, target_size))
+        save_preprocessed_image(resize_image(preprocessed_image, target_size), output_path)
+        output_coords_file = os.path.join(output_directory, 'rescaled_coords.txt')
+        with open(output_coords_file, 'w') as file:
+            for coord in rescaled_coords:
+                file.write(f"{coord[0]}\t{coord[1]}\t{coord[2]:.6f}\t{coord[3]:.6f}\t{coord[4]}\n")
+    else:
+        print(f"Error: Unable to load image {input_path}")
+
+
+
+
+
+def preprocess_images_in_directory(input_directory, output_directory, coords_file, bbox, target_size=(256, 256), test_dir=None, display_size=1024, use_multithreading=False, max_workers=4):
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
-
     if test_dir and not os.path.exists(test_dir):
         os.makedirs(test_dir)
-
-    filenames = sorted([f for f in os.listdir(input_directory)
-                        if f.endswith('.png') or f.endswith('.jpg') or f.endswith('.jpeg')])
-
+    filenames = sorted([f for f in os.listdir(input_directory) if f.endswith('.png') or f.endswith('.jpg') or f.endswith('.jpeg')])
     filenames = filenames[1:]
+    coords = read_coordinates(coords_file)
 
     with tqdm.tqdm(total=len(filenames), desc='Processing images') as pbar:
-        i = 0
-        for filename in filenames:
-            input_path = os.path.join(input_directory, filename)
-            output_path = os.path.join(output_directory, filename)
-            if os.path.exists(output_path):
+        if use_multithreading:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = []
+                for filename in filenames:
+                    input_path = os.path.join(input_directory, filename)
+                    output_path = os.path.join(output_directory, filename)
+                    if os.path.exists(output_path):
+                        pbar.update(1)
+                        continue
+                    futures.append(executor.submit(process_single_image, input_path, output_path, output_directory, coords, bbox, target_size, display_size, test_dir))
+                for future in futures:
+                    future.result()  # Ensure all futures are completed
+                    pbar.update(1)
+        else:
+            for filename in filenames:
+                input_path = os.path.join(input_directory, filename)
+                output_path = os.path.join(output_directory, filename)
+                if os.path.exists(output_path):
+                    pbar.update(1)
+                    continue
+                process_single_image(input_path, output_path, coords, bbox, target_size, display_size, test_dir)
                 pbar.update(1)
-                continue
-            image = cv2.imread(input_path)
-            if image is not None:
-                cropped_image = crop_image(image, bbox, display_size = display_size)
-                image = preprocess_image(cropped_image, target_size)
-                if test_dir is not None and cropped_image is not None:
-                    test_output_path = os.path.join(test_dir, f'{i+1}.jpg')
-                    cv2.imwrite(test_output_path, cropped_image)
 
-                save_preprocessed_image(resize_image(image, target_size), output_path)
-                
-            else:
-                print(f"Error: Unable to load image {filename}")
-            pbar.update(1)
+    
 
-def main():
+def main(use_multithreading=False, max_workers=4):
     display_size = sample_images_from_folder('C:/Users/Jackson/Downloads/MT_plus_Tracking/MT_plus_Tracking/5_20/MT10_2/MT10_30min_200x_1500_138_146pm')
-    preprocess_images_in_directory('C:/Users/Jackson/Downloads/MT_plus_Tracking/MT_plus_Tracking/5_20/MT10_2/MT10_30min_200x_1500_138_146pm','C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2',bbox, display_size=display_size)
+    preprocess_images_in_directory(
+        'C:/Users/Jackson/Downloads/MT_plus_Tracking/MT_plus_Tracking/5_20/MT10_2/MT10_30min_200x_1500_138_146pm',
+        'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2',
+        'c:/Users/Jackson/Downloads/MT_plus_Tracking/MT_plus_Tracking/5_20/MT10_2/MT10_2_snake/MT10_1113.txt',
+        bbox,
+        display_size=display_size,
+        test_dir='C:/Users/Jackson/Documents/mt_data/experimental',
+        use_multithreading=use_multithreading,
+        max_workers=max_workers
+    )
+
+if __name__ == '__main__':
+    main(use_multithreading=True, max_workers=8)
+
 
 if __name__ == '__main__':
     main()
