@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import tqdm
+from plantcv import plantcv as pcv
 from concurrent.futures import ThreadPoolExecutor
 bbox_start = (0, 0)
 dragging = False
@@ -16,7 +17,6 @@ def crop_image(original_image, bbox, display_size=1024):
     x, y, w, h = [int(coord * scale) for coord, scale in zip(bbox, [scale_x, scale_y, scale_x, scale_y])]
     return original_image[y:y+h, x:x+w]
 
-
 def save_preprocessed_image(image, filename):
     if(len(image.shape) == 3):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -25,7 +25,8 @@ def save_preprocessed_image(image, filename):
 def resize_image(image, target_size=(256, 256)):
     return cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
 
-def connected_components(image, threshold=20):
+def connected_components(image, threshold=0):
+    image = cv2.fastNlMeansDenoising(image, None, 10, 7, 21)
     _, binary = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     cleaned_image = np.zeros_like(image)
@@ -41,20 +42,18 @@ def connected_components(image, threshold=20):
     return cleaned_image
 
 def preprocess_image(image,  target_size = (256,256)):
-
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) 
-
-    image = image / 255.0
-    
-    image = resize_image(image, target_size)
-
-    image = (image * 255).astype(np.uint8) 
-    image = cv2.fastNlMeansDenoising(image, None, 10, 7, 21)
-
+    image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+    image = cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
+    if len(image.shape)==3:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) 
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     image = clahe.apply(image)
-    
-    image = connected_components(image)
+    image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+
+    image = connected_components(image, threshold=127)
+    if target_size is not None:
+        image = resize_image(image, target_size)
+
 
     return image
 
@@ -132,7 +131,7 @@ def plot_images_side_by_side(images, titles=None):
     plt.tight_layout()
     plt.show()
 
-def sample_images_from_folder(directory, target_size=(1024, 1024), end=False):
+def sample_images_from_folder(directory, target_size=(1024, 1024)):
     image_files = sorted([f for f in os.listdir(directory) if f.endswith('.jpg')])
 
     if len(image_files) < 5:
@@ -144,9 +143,7 @@ def sample_images_from_folder(directory, target_size=(1024, 1024), end=False):
 
     images = [cv2.imread(os.path.join(directory, img)) for img in selected_images]
 
-    if end is False:
-        cropped_images, selected_bbox = display_and_select_bounding_boxes(images, target_size=target_size)
-        
+    cropped_images, selected_bbox = display_and_select_bounding_boxes(images, target_size=target_size)
     if cropped_images:
         plot_images_side_by_side(cropped_images, titles=selected_images)
         cv2.waitKey(0)
@@ -156,6 +153,7 @@ def read_coordinates(filename):
     with open(filename, 'r') as file:
         lines = file.readlines()
     coords = []
+    invalid_lines = 0
     for line in lines:
         if line.startswith('#') or line.strip() == '':
             continue
@@ -164,7 +162,7 @@ def read_coordinates(filename):
             frame, coord_num, x, y, val = map(float, parts)
             coords.append((int(frame), int(coord_num), x, y, val))
         else:
-            print(f"Skipping invalid line: {line.strip()}")
+            invalid_lines = invalid_lines+1
     return coords
 
 def crop_and_rescale_coordinates(image, bbox, coords, display_size=1024, target_size=(256, 256)):
@@ -178,27 +176,27 @@ def crop_and_rescale_coordinates(image, bbox, coords, display_size=1024, target_
                        for frame, coord_num, x_coord, y_coord, val in coords]
     return cropped_image, rescaled_coords
 
-def process_single_image(input_path, output_path, output_directory, coords, bbox, target_size, display_size, test_dir=None):
+def process_single_image(input_path, output_path, output_directory, coords, bbox, target_size, display_size, test_dir=None, manual_tracking=False):
     image = cv2.imread(input_path)
-    if image is not None:
+    if image is not None and manual_tracking is False:
         cropped_image, rescaled_coords = crop_and_rescale_coordinates(image, bbox, coords, display_size=display_size, target_size=target_size)
         preprocessed_image = preprocess_image(cropped_image, target_size)
         if test_dir is not None:
             test_output_path = os.path.join(test_dir, os.path.basename(output_path))
-            cv2.imwrite(test_output_path, resize_image(cropped_image, target_size))
+            cv2.imwrite(test_output_path, crop_image(image, bbox))
         save_preprocessed_image(resize_image(preprocessed_image, target_size), output_path)
-        output_coords_file = os.path.join(output_directory, 'rescaled_coords.txt')
+        output_coords_file = os.path.join(output_directory, 'rescaled_coords.e')
         with open(output_coords_file, 'w') as file:
             for coord in rescaled_coords:
-                file.write(f"{coord[0]}\t{coord[1]}\t{coord[2]:.6f}\t{coord[3]:.6f}\t{coord[4]}\n")
+                if coord[0] != 1:
+                    file.write(f"{coord[0]-1}\t{coord[1]}\t{coord[2]:.6f}\t{coord[3]:.6f}\t{coord[4]}\n")
+    elif image is not None:
+        cropped_image, __ = crop_and_rescale_coordinates(image, bbox, coords, display_size=display_size, target_size=target_size)
+        save_preprocessed_image(preprocess_image(cropped_image, target_size = None), output_path)
     else:
         print(f"Error: Unable to load image {input_path}")
 
-
-
-
-
-def preprocess_images_in_directory(input_directory, output_directory, coords_file, bbox, target_size=(256, 256), test_dir=None, display_size=1024, use_multithreading=False, max_workers=4):
+def preprocess_images_in_directory(input_directory, output_directory, coords_file, bbox, target_size=(256, 256), test_dir=None, display_size=1024, use_multithreading=False, max_workers=4, manual_tracking = False):
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
     if test_dir and not os.path.exists(test_dir):
@@ -217,7 +215,7 @@ def preprocess_images_in_directory(input_directory, output_directory, coords_fil
                     if os.path.exists(output_path):
                         pbar.update(1)
                         continue
-                    futures.append(executor.submit(process_single_image, input_path, output_path, output_directory, coords, bbox, target_size, display_size, test_dir))
+                    futures.append(executor.submit(process_single_image, input_path, output_path, output_directory, coords, bbox, target_size, display_size, test_dir, manual_tracking=manual_tracking))
                 for future in futures:
                     future.result()  # Ensure all futures are completed
                     pbar.update(1)
@@ -241,14 +239,10 @@ def main(use_multithreading=False, max_workers=4):
         'c:/Users/Jackson/Downloads/MT_plus_Tracking/MT_plus_Tracking/5_20/MT10_2/MT10_2_snake/MT10_1113.txt',
         bbox,
         display_size=display_size,
-        test_dir='C:/Users/Jackson/Documents/mt_data/experimental',
         use_multithreading=use_multithreading,
-        max_workers=max_workers
+        max_workers=max_workers,
+        manual_tracking= True
     )
 
 if __name__ == '__main__':
-    main(use_multithreading=True, max_workers=8)
-
-
-if __name__ == '__main__':
-    main()
+    main(use_multithreading=True, max_workers=4)
