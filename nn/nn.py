@@ -5,17 +5,15 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
 from tqdm import tqdm
-import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 # Define the maximum number of coordinates
 MAX_COORDS = 400
 
 class MicrotubuleDataset(Dataset):
-    def __init__(self, data_dir, transform=None):
+    def __init__(self, data_dir):
         self.data_dir = data_dir
-        self.transform = transform
         self.image_paths = []
         self.coordinates = []
         self._load_data()
@@ -23,8 +21,6 @@ class MicrotubuleDataset(Dataset):
     def _load_data(self):
         print(f"Loading data from {self.data_dir}")
         subfolders = [f for f in os.listdir(self.data_dir) if os.path.isdir(os.path.join(self.data_dir, f))]
-        subfolders = subfolders
-        print("subfolders: {subfolders}")
         for subfolder in tqdm(subfolders, desc="Loading subfolders"):
             subfolder_path = os.path.join(self.data_dir, subfolder)
             # Load images
@@ -45,7 +41,7 @@ class MicrotubuleDataset(Dataset):
                         if len(parts) >= 4:
                             coords.append([float(parts[2]), float(parts[3])])
                 
-                self.image_paths.extend(images)
+                self.image_paths.extend(sorted(images))
                 self.coordinates.extend([coords] * len(images))
         
         print(f"Total images loaded: {len(self.image_paths)}")
@@ -57,11 +53,8 @@ class MicrotubuleDataset(Dataset):
     def __getitem__(self, idx):
         image_path = self.image_paths[idx]
         image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        image = cv2.resize(image, (512, 512))
+        image = cv2.resize(image, (256, 256))  # Reduced image size
         coords = np.array(self.coordinates[idx])
-        
-        if self.transform:
-            image = self.transform(image)
 
         # Ensure the number of coordinates matches MAX_COORDS
         if len(coords) > MAX_COORDS:
@@ -70,95 +63,78 @@ class MicrotubuleDataset(Dataset):
             padding = np.zeros((MAX_COORDS - len(coords), 2))
             coords = np.vstack((coords, padding))
 
+        image = torch.from_numpy(image).unsqueeze(0).float()
+        coords = torch.from_numpy(coords).float()
+
         return image, coords
 
-class VAE(nn.Module):
-    def __init__(self):
-        super(VAE, self).__init__()
-        self.encoder = nn.Sequential(
-            nn.Conv2d(1, 32, 4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, 4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(128, 256, 4, stride=2, padding=1),
-            nn.ReLU(),
-        )
-        self.fc_mu = nn.Linear(256 * 32 * 32, 512)
-        self.fc_logvar = nn.Linear(256 * 32 * 32, 512)
-        self.fc_decode = nn.Linear(512, 256 * 32 * 32)
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 1, 4, stride=2, padding=1),
-            nn.Sigmoid(),
-        )
-        self.fc_coords = nn.Linear(512, MAX_COORDS * 2)  # Produces MAX_COORDS coordinate pairs
+class UNet(nn.Module):
+    def __init__(self, in_channels=1, out_channels=1):
+        super(UNet, self).__init__()
+        
+        def conv_block(in_channels, out_channels):
+            return nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True)
+            )
+        
+        def up_conv_block(in_channels, out_channels):
+            return nn.Sequential(
+                nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
+                nn.ReLU(inplace=True)
+            )
 
-    def encode(self, x):
-        h = self.encoder(x)
-        h = h.view(h.size(0), -1)
-        return self.fc_mu(h), self.fc_logvar(h)
-
-    def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(std)
-        return mu + eps * std
-
-    def decode(self, z):
-        h = self.fc_decode(z)
-        h = h.view(h.size(0), 256, 32, 32)
-        return self.decoder(h)
+        self.encoder1 = conv_block(in_channels, 32)  # Reduced number of filters
+        self.encoder2 = conv_block(32, 64)
+        
+        self.bottleneck = conv_block(64, 128)
+        
+        self.upconv2 = up_conv_block(128, 64)
+        self.decoder2 = conv_block(128, 64)
+        self.upconv1 = up_conv_block(64, 32)
+        self.decoder1 = conv_block(64, 32)
+        
+        self.out_conv = nn.Conv2d(32, out_channels, kernel_size=1)
+        self.fc_coords = nn.Linear(128 * 64 * 64, MAX_COORDS * 2)  # Adjusted for new bottleneck size
 
     def forward(self, x):
-        mu, logvar = self.encode(x)
-        z = self.reparameterize(mu, logvar)
-        recon_x = self.decode(z)
-        coords = self.fc_coords(z)
-        return recon_x, coords.view(coords.size(0), -1, 2), mu, logvar
+        # Encoder
+        e1 = self.encoder1(x)
+        e2 = self.encoder2(F.max_pool2d(e1, 2))
+        
+        # Bottleneck
+        b = self.bottleneck(F.max_pool2d(e2, 2))
+        
+        # Decoder
+        d2 = self.upconv2(b)
+        d2 = torch.cat((d2, e2), dim=1)
+        d2 = self.decoder2(d2)
+        d1 = self.upconv1(d2)
+        d1 = torch.cat((d1, e1), dim=1)
+        d1 = self.decoder1(d1)
+        
+        # Output
+        out = self.out_conv(d1)
+        
+        # Flatten and pass through a fully connected layer for coordinate prediction
+        coords = self.fc_coords(b.view(b.size(0), -1))
+        
+        return out, coords.view(coords.size(0), -1, 2)
 
-def loss_function(recon_x, x, coords, target_coords, mu, logvar):
-    BCE = nn.BCELoss(reduction='sum')(recon_x, x)
-    MSE = nn.MSELoss(reduction='sum')(coords, target_coords)
-    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return BCE + MSE + KLD
-
-
-def plot_and_save_image(image, true_coords, pred_coords, epoch, filename, output_dir='output_images'):
-    # Ensure the output directory exists
-    os.makedirs(output_dir, exist_ok=True)
-    
-    plt.figure(figsize=(8, 8))
-    plt.imshow(image.squeeze(), cmap='gray')
-    
-    true_coords = true_coords.cpu().numpy()
-    pred_coords = pred_coords.cpu().detach().numpy()
-    
-    # Plot true coordinates
-    plt.scatter(true_coords[:, 0], true_coords[:, 1], c='blue', label='True Coordinates', s=5)
-    # Plot predicted coordinates
-    plt.scatter(pred_coords[:, 0], pred_coords[:, 1], c='red', label='Predicted Coordinates', s=5)
-    
-    plt.legend()
-    plt.title(f'Epoch {epoch + 1}')
-    
-    output_path = os.path.join(output_dir, f'epoch_{epoch + 1}_{filename}.png')
-    plt.savefig(output_path)
-    plt.close()
+# Adjust the training loop and loss function accordingly
+def loss_function(recon_x, x, coords, target_coords):
+    BCE = nn.BCEWithLogitsLoss()(recon_x, x)
+    MSE = nn.MSELoss()(coords, target_coords)
+    return BCE + MSE
 
 def train(model, dataloader, optimizer, epochs=10):
     model.train()
     for epoch in range(epochs):
         train_loss = 0
-        last_data = None
-        last_target_coords = None
-        last_coords = None
-        last_filename = None
         with tqdm(total=len(dataloader), desc=f"Epoch {epoch + 1}") as pbar:
             for batch_idx, (data, target_coords) in enumerate(dataloader):
                 data = data.float() / 255.0  # Normalize
@@ -166,40 +142,32 @@ def train(model, dataloader, optimizer, epochs=10):
                 target_coords = target_coords.float()
                 target_coords = target_coords.cuda() if torch.cuda.is_available() else target_coords
                 optimizer.zero_grad()
-                recon_batch, coords, mu, logvar = model(data)
-                loss = loss_function(recon_batch, data, coords, target_coords, mu, logvar)
+                recon_batch, coords = model(data)
+                loss = loss_function(recon_batch, data, coords, target_coords)
                 loss.backward()
                 train_loss += loss.item()
                 optimizer.step()
                 pbar.update(1)
-                
-                # Save last batch data for visualization
-                last_data = data[-1].cpu()  # Save the last image in the batch
-                last_target_coords = target_coords[-1].cpu()  # Save the corresponding target coordinates
-                last_coords = coords[-1].cpu()  # Save the corresponding predicted coordinates
-                last_filename = os.path.basename(dataloader.dataset.image_paths[batch_idx * data.size(0) + (data.size(0) - 1)])
 
         print(f'Epoch {epoch + 1}, Loss: {train_loss / len(dataloader.dataset)}')
         
-        # Plot and save the image with coordinates overlayed
-        plot_and_save_image(last_data, last_target_coords, last_coords, epoch, last_filename)
+    # Save the model after training
+    model_save_path = 'unet_model.pth'
+    torch.save(model.state_dict(), model_save_path)
+    print(f"Model saved to {model_save_path}")
 
-
+# Adjust main function accordingly
 def main():
-    data_dir = 'C:/Users/Jackson/Documents/mt_data/preprocessed'  # Replace with your data directory
-    batch_size = 32
-    learning_rate = 1e-3
+    data_dir = 'C:/Users/Jackson/Documents/mt_data/postprocessed'  # Replace with your data directory
+    batch_size = 16  # Reduced batch size
+    learning_rate = 2e-4
     epochs = 10
     num_workers = 4  # Number of worker processes for data loading
 
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-    ])
-
-    dataset = MicrotubuleDataset(data_dir, transform=transform)
+    dataset = MicrotubuleDataset(data_dir)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
 
-    model = VAE().cuda() if torch.cuda.is_available() else VAE()
+    model = UNet().cuda() if torch.cuda.is_available() else UNet()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     train(model, dataloader, optimizer, epochs=epochs)
