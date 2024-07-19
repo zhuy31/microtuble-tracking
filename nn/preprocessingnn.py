@@ -199,11 +199,16 @@ def process_single_image(input_path, output_path, output_directory, coords, bbox
                 if coord[0] != 1:
                     file.write(f"{coord[0]-1}\t{coord[1]}\t{coord[2]:.6f}\t{coord[3]:.6f}\t{coord[4]}\n")
     elif image is not None:
-        cropped_image, __ = crop_and_rescale_coordinates(image, bbox, coords, display_size=display_size, target_size=target_size)
+        cropped_image, rescaled_coords = crop_and_rescale_coordinates(image, bbox, coords, display_size=display_size, target_size=target_size)
         if test_dir is not None:
             test_output_path = os.path.join(test_dir, os.path.basename(output_path))
             cv2.imwrite(test_output_path, crop_image(image, bbox))
         save_preprocessed_image(preprocess_image(cropped_image, target_size = None), output_path,target_size=None)
+        output_coords_file = os.path.join(output_directory, 'rescaled_coords.e')
+        with open(output_coords_file, 'w') as file:
+            for coord in rescaled_coords:
+                if coord[0] != 1:
+                    file.write(f"{coord[0]-1}\t{coord[1]}\t{coord[2]:.6f}\t{coord[3]:.6f}\t{coord[4]}\n")
         
     else:
         print(f"Error: Unable to load image {input_path}")

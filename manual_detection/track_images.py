@@ -9,6 +9,35 @@ import math
 from matplotlib.animation import FuncAnimation
 from skimage.morphology import skeletonize, binary_dilation, square
 
+def add_text_to_image(image, text, position='lower_right', margin=10, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=1, thickness=2, color=(255, 255, 255)):
+    # Get the dimensions of the image
+    height, width = image.shape[:2]
+    
+    # Get the size of the text
+    (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+    
+    # Calculate the position to place the text
+    if position == 'lower_right':
+        x = width - text_width - margin
+        y = height - margin
+    elif position == 'lower_left':
+        x = margin
+        y = height - margin
+    elif position == 'upper_right':
+        x = width - text_width - margin
+        y = text_height + margin
+    elif position == 'upper_left':
+        x = margin
+        y = text_height + margin
+    else:
+        raise ValueError("Position must be one of 'lower_right', 'lower_left', 'upper_right', 'upper_left'")
+    
+    # Put the text on the image
+    cv2.putText(image, text, (x, y), font, font_scale, color, thickness)
+    
+    return image
+
+
 def process_image(image):
 
     # Threshold the image
@@ -56,7 +85,7 @@ def fit_bezier_curve_to_grayscale_image(grayscale_image, control_points_count=6)
         return None, None
 
     # Fit a spline to the detected edge points
-    tck, _ = splprep([x, y], s=3)
+    tck, _ = splprep([x, y])
     u_fine = np.linspace(0, 1, control_points_count)
     x_spline, y_spline = splev(u_fine, tck)
 
@@ -93,7 +122,7 @@ def mse_loss(control_points, x, y, w):
     dy = curve[:, 1] - y
     return np.sum(w * (dx**2 + dy**2))
 
-def save_curve_coordinates(directory, output_file, control_points_count=6, num_points=100):
+def save_curve_coordinates(directory, output_file, control_points_count=6, num_points=400):
 
     files = os.listdir(directory)
     image_files = sorted([f for f in files if f.lower().endswith(('png', 'jpg', 'jpeg', 'bmp', 'gif', 'tiff'))])
@@ -130,15 +159,20 @@ def read_coordinates(file_path):
     return frames
 
 def plot_points_on_image(points, image_shape):
-
+    import numpy as np
+    
+    # Create a blank image with the given shape
     image = np.zeros(image_shape, dtype=np.uint8)
+    
+    # Plot each point on the image
     for (x, y) in points:
-        cv2.circle(image, (int(x), int(y)), 1, 255, -1)
+        #if int(y*image_shape[0]/256) < image_shape[0] and int(x*image_shape[1]/256) < image_shape[1]: 
+        #    image[int(y*image_shape[0]/256), int(x*image_shape[1]/256)] = 255 
+        image[int(y+0.5), int(x+0.5)] = 255 
+
     return image
 
-import cv2
-
-def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtubule_dir=None, interval=100, fps=10):
+def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtubule_dir=None, interval=100, fps=10, viewProcessed = False):
     frames = read_coordinates(coordinate_file)
     images = []
     MSELOSS = [0]
@@ -148,6 +182,7 @@ def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtu
     if len(microtubule_files) < len(frames):
         raise ValueError("Not enough microtubule images for the frames available.")
 
+    i = 0
     for frame_id, microtubule_file in tqdm(zip(sorted(frames.keys()), microtubule_files)):
         points = frames[frame_id]
 
@@ -180,8 +215,20 @@ def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtu
 
         plot_image_color = cv2.merge([ np.zeros_like(plot_image), np.zeros_like(plot_image), plot_image])
 
-        overlay_image = cv2.addWeighted(microtubule_image.astype(np.uint8), 0.7, plot_image_color.astype(np.uint8), 0.3, 0)
+        if viewProcessed is True:
+            microtubule_image = process_image(cv2.cvtColor(microtubule_image, cv2.COLOR_RGB2GRAY))
+            microtubule_image = (microtubule_image - microtubule_image.min()) / (microtubule_image.max() - microtubule_image.min()) * 255
+            microtubule_image = cv2.cvtColor(microtubule_image.astype(np.uint8), cv2.COLOR_GRAY2RGB)
+        else:
+            temp = process_image(cv2.cvtColor(microtubule_image, cv2.COLOR_RGB2GRAY))
+            temp = (temp - temp.min()) / (temp.max() - temp.min()) * 255
+            temp = cv2.cvtColor(temp.astype(np.uint8), cv2.COLOR_GRAY2RGB)  
+            cv2.imwrite(f'C:/Users/Jackson/Documents/mt_data/experimental2/image_{i}.png', temp)
 
+        overlay_image = cv2.addWeighted(microtubule_image.astype(np.uint8), 0.5, plot_image_color.astype(np.uint8), 0.7, 0)
+        overlay_image = add_text_to_image(overlay_image, f'{i}')
+        i = i+1
+        
         if pastimage is not None:
             MSELOSS.append((np.sum(plot_image != 0) - np.sum(pastimage != 0))**2)
         pastimage = plot_image
@@ -208,5 +255,5 @@ if __name__ == "__main__":
     image_directory = 'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2'  # Change this to the correct directory
     output_file = 'output_coordinates.txt'
     save_curve_coordinates(image_directory, output_file)
-    MSELOSS = save_video_from_coordinates(output_file, image_shape=None, fps = 30, video_dir= 'C:/Users/Jackson/Documents/GitHub/microtuble-tracking/manual_detection', microtubule_dir= 'C:/Users/Jackson/Documents/mt_data/experimental',interval=100)
+    MSELOSS = save_video_from_coordinates(output_file, image_shape=None, fps = 10, video_dir= 'C:/Users/Jackson/Documents/GitHub/microtuble-tracking/manual_detection', microtubule_dir= 'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2',interval=100, viewProcessed=False)
 
