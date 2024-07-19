@@ -4,31 +4,7 @@ Code for the tracking of microtubles
 
 Two methods:
 1) Manual tracking (WIP)
-2) Hybrid CNN and RNN neural network (nn.py)
-
-**Rudimentary Documentation/Example commands:**
-
-**Preprocessing**
-
-select ROI, press **enter** to confirm once, press **enter** to confirm for the second time (**c** to cancel at any time)
-Allows for selection of region of interest (ROI), and converts all images to 512x512 grayscale. Scales coordinate training file correspondingly.
-
-```
-c:/Users/Jackson/Documents/GitHub/microtuble-tracking/nn/preprocessingnn.py --input_dir C:\Users\Jackson\Downloads\MT7_30min_100x_443_453pm_1500\MT7_30min_100x_443_453pm_1500 --output_dir C:\Users\Jackson\Documents\mt_data\preprocessed\imageset1 --coords_file C:\Users\Jackson\Downloads\MT7snake.txt
-```
-
-
-**Postprocessing**
-
-Creates many folders each with transformations of the imageset along with transformed coordinates
-```
-c:/Users/Jackson/Documents/GitHub/microtuble-tracking/nn/postprocessingnn.py --input_dir C:\Users\Jackson\Documents\mt_data\preprocessed --output_dir C:\Users\Jackson\Documents\mt_data\postprocessed
-```
-
-**Training Neural Network**
-
-```
-C:/Users/Jackson/AppData/Local/Programs/Python/Python312/python.exe c:/Users/Jackson/Documents/GitHub/microtuble-tracking/nn/nn.py --data_dir C:\Users\Jackson\Documents\mt_data\postprocessed --batch_size 1 --num_workers 4 --num_epochs 20
-```
-
-**Running Neural Network**
+  a) Use preprocessing.py in the folder nn to preprocess the images
+  b) Then, track using track_images.py
+  c) Currently working, can display video file of tracked points
+3) Hybrid CNN and RNN neural network (nn.py) (WIP, barely works as of right now)
