@@ -257,3 +257,4 @@ if __name__ == "__main__":
     save_curve_coordinates(image_directory, output_file)
     MSELOSS = save_video_from_coordinates(output_file, image_shape=None, fps = 10, video_dir= 'C:/Users/Jackson/Documents/GitHub/microtuble-tracking/manual_detection', microtubule_dir= 'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2',interval=100, viewProcessed=False)
 
+    
