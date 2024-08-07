@@ -10,13 +10,11 @@ from matplotlib.animation import FuncAnimation
 from skimage.morphology import skeletonize, binary_dilation, square
 
 def add_text_to_image(image, text, position='lower_right', margin=10, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=1, thickness=2, color=(255, 255, 255)):
-    # Get the dimensions of the image
+
     height, width = image.shape[:2]
-    
-    # Get the size of the text
+
     (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, thickness)
-    
-    # Calculate the position to place the text
+
     if position == 'lower_right':
         x = width - text_width - margin
         y = height - margin
@@ -40,7 +38,6 @@ def add_text_to_image(image, text, position='lower_right', margin=10, font=cv2.F
 
 def process_image(image):
 
-    # Threshold the image
     _, binary_img = cv2.threshold(image, 40, 255, cv2.THRESH_BINARY)
 
 
@@ -172,11 +169,23 @@ def plot_points_on_image(points, image_shape):
 
     return image
 
+def curve_length(points):
+
+    if len(points) < 2:
+        return 0.0
+
+    length = 0.0
+    for i in range(1, len(points)):
+        dx = points[i][0] - points[i - 1][0]
+        dy = points[i][1] - points[i - 1][1]
+        length += math.sqrt(dx**2 + dy**2)
+    
+    return length
+
 def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtubule_dir=None, interval=100, fps=10, viewProcessed = False):
     frames = read_coordinates(coordinate_file)
     images = []
-    MSELOSS = [0]
-    pastimage = None
+    lengths = []
 
     microtubule_files = sorted([f for f in os.listdir(microtubule_dir) if f.lower().endswith(('png', 'jpg', 'jpeg', 'bmp', 'gif', 'tiff'))])
     if len(microtubule_files) < len(frames):
@@ -185,8 +194,7 @@ def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtu
     i = 0
     for frame_id, microtubule_file in tqdm(zip(sorted(frames.keys()), microtubule_files)):
         points = frames[frame_id]
-
-
+        lengths.append(curve_length(points))
         microtubule_image = cv2.imread(os.path.join(microtubule_dir, microtubule_file))
         if microtubule_image is None:
             print(f"Error loading image: {microtubule_file}")
@@ -218,26 +226,27 @@ def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtu
         if viewProcessed is True:
             microtubule_image = process_image(cv2.cvtColor(microtubule_image, cv2.COLOR_RGB2GRAY))
             microtubule_image = (microtubule_image - microtubule_image.min()) / (microtubule_image.max() - microtubule_image.min()) * 255
-            microtubule_image = cv2.cvtColor(microtubule_image.astype(np.uint8), cv2.COLOR_GRAY2RGB)
+            microtubule_image = cv2.merge([ np.zeros_like(microtubule_image), microtubule_image,  np.zeros_like(microtubule_image)])
+            
         else:
             temp = process_image(cv2.cvtColor(microtubule_image, cv2.COLOR_RGB2GRAY))
             temp = (temp - temp.min()) / (temp.max() - temp.min()) * 255
             temp = cv2.cvtColor(temp.astype(np.uint8), cv2.COLOR_GRAY2RGB)  
             cv2.imwrite(f'C:/Users/Jackson/Documents/mt_data/experimental2/image_{i}.png', temp)
 
+
         overlay_image = cv2.addWeighted(microtubule_image.astype(np.uint8), 0.5, plot_image_color.astype(np.uint8), 0.7, 0)
         overlay_image = add_text_to_image(overlay_image, f'{i}')
         i = i+1
-        
-        if pastimage is not None:
-            MSELOSS.append((np.sum(plot_image != 0) - np.sum(pastimage != 0))**2)
+
         pastimage = plot_image
+
+        if viewProcessed is True:
+            kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+            overlay_image = cv2.filter2D(overlay_image, -1, kernel)
         images.append(overlay_image)
 
-    for i in range(len(MSELOSS) - len(images) + 2):
-        MSELOSS.append(0)
 
-    plt.scatter(range(len(MSELOSS)), MSELOSS)
     
     # Define the codec and create VideoWriter object
     video_path = os.path.join(video_dir, 'output_video.mp4')
@@ -249,12 +258,17 @@ def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtu
 
     video_writer.release()
 
-    return MSELOSS
+    return lengths
 
 if __name__ == "__main__":
     image_directory = 'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2'  # Change this to the correct directory
     output_file = 'output_coordinates.txt'
+    print("tracking curves...")
     save_curve_coordinates(image_directory, output_file)
-    MSELOSS = save_video_from_coordinates(output_file, image_shape=None, fps = 10, video_dir= 'C:/Users/Jackson/Documents/GitHub/microtuble-tracking/manual_detection', microtubule_dir= 'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2',interval=100, viewProcessed=False)
-
+    print("saving video...")
+    lengths = save_video_from_coordinates(output_file, image_shape=None, fps = 10, video_dir= 'C:/Users/Jackson/Documents/GitHub/microtuble-tracking/manual_detection', microtubule_dir= 'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2',interval=100, viewProcessed=True)
+    x = np.linspace(1,len(lengths),num = len(lengths))
+    y = lengths
+    plt.scatter(x,y)
+    plt.show()
     
