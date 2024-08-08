@@ -3,10 +3,7 @@ import math
 import matplotlib.pyplot as plt
 
 def read_coordinates(file_path):
-    """
-    Read coordinates from a text file and return them as a dictionary.
-    Each key is a frame number and the value is a list of (x, y) tuples.
-    """
+
     frames = {}
     with open(file_path, 'r') as f:
         for line in f:
@@ -21,15 +18,7 @@ def read_coordinates(file_path):
     return frames
 
 def curve_length(points):
-    """
-    Compute the length of a curve defined by a set of points.
 
-    Args:
-    points (list of tuple): List of (x, y) coordinates representing the curve.
-
-    Returns:
-    float: The length of the curve.
-    """
     if len(points) < 2:
         return 0.0
 
@@ -42,15 +31,6 @@ def curve_length(points):
     return length
 
 def calculate_lengths(file_path):
-    """
-    Calculate the length of the curve for each frame in the given text file.
-
-    Args:
-    file_path (str): Path to the text file containing coordinates.
-
-    Returns:
-    dict: Dictionary where keys are frame numbers and values are lengths of the curves.
-    """
     frames = read_coordinates(file_path)
     lengths = {}
     for frame_id, points in frames.items():
@@ -58,7 +38,7 @@ def calculate_lengths(file_path):
     return lengths
 
 if __name__ == "__main__":
-    file_path = 'C:/Users/Jackson/Downloads/MT_plus_Tracking/MT_plus_Tracking/5_20/MT10_2/MT10_2_snake/MT10_1113.txt'  # Change this to the correct path
+    file_path = '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection/output_coordinates.txt'  # Change this to the correct path
     lengths = calculate_lengths(file_path)
     x = []
     y = []

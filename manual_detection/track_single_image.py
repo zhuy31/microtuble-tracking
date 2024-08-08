@@ -108,6 +108,6 @@ def process_single_image(image_path, output_path=None):
     
 
 if __name__ == "__main__":
-    image_path = 'C:/Users/Jackson/Documents/mt_data/experimental2/image_269.png'  # Change this to the correct path
+    image_path = '/home/yuming/Documents/mt_data/experimental2/image_269.png'  # Change this to the correct path
     output_path = 'overlayed_image.jpg'  # Optional: specify an output path to save the image
     process_single_image(image_path, output_path)

@@ -119,25 +119,40 @@ def mse_loss(control_points, x, y, w):
     dy = curve[:, 1] - y
     return np.sum(w * (dx**2 + dy**2))
 
-def save_curve_coordinates(directory, output_file, control_points_count=6, num_points=400):
+def save_curve_coordinates(directory, output_file, control_points_count=6, num_points=400, no_bezier_fit = False):
 
     files = os.listdir(directory)
     image_files = sorted([f for f in files if f.lower().endswith(('png', 'jpg', 'jpeg', 'bmp', 'gif', 'tiff'))])
     
     with open(output_file, 'w') as f:
         frame = 1
-        for filename in tqdm(image_files):
-            image_path = os.path.join(directory, filename)
-            image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-            control_points, time_scale = fit_bezier_curve_to_grayscale_image(image, control_points_count=control_points_count)
-            if control_points is not None:
-                t_fine = np.linspace(0, 1, num_points)
-                fitted_curve = bezier_curve(t_fine, control_points)
+        if no_bezier_fit is False:
+            for filename in tqdm(image_files):
+                image_path = os.path.join(directory, filename)
+                image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+
+                control_points, time_scale = fit_bezier_curve_to_grayscale_image(image, control_points_count=control_points_count)
+                if control_points is not None:
+                    t_fine = np.linspace(0, 1, num_points)
+                    fitted_curve = bezier_curve(t_fine, control_points)
+                    
+                    frame += 1
+                    for i, (x, y) in enumerate(fitted_curve):
+                        f.write(f"{frame}\t{i}\t{x}\t{y}\t0\n")
+                else:
+                    print(f"No Bezier curve found for {filename}")
+        else:
+            
+            for filename in tqdm(image_files):
+                image_path = os.path.join(directory, filename)
+                image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+                image = process_image(image)
                 frame += 1
-                for i, (x, y) in enumerate(fitted_curve):
-                    f.write(f"{frame}\t{i}\t{x}\t{y}\t0\n")
-            else:
-                print(f"No Bezier curve found for {filename}")
+                nonblack_points = np.transpose(np.nonzero(image))
+                
+                for i, (x, y) in enumerate(nonblack_points):
+
+                    f.write(f"{frame}\t{i}\t{y}\t{x}\t0\n")
 
 def read_coordinates(file_path):
 
@@ -160,11 +175,7 @@ def plot_points_on_image(points, image_shape):
     
     # Create a blank image with the given shape
     image = np.zeros(image_shape, dtype=np.uint8)
-    
-    # Plot each point on the image
     for (x, y) in points:
-        #if int(y*image_shape[0]/256) < image_shape[0] and int(x*image_shape[1]/256) < image_shape[1]: 
-        #    image[int(y*image_shape[0]/256), int(x*image_shape[1]/256)] = 255 
         image[int(y+0.5), int(x+0.5)] = 255 
 
     return image
@@ -261,12 +272,13 @@ def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtu
     return lengths
 
 if __name__ == "__main__":
-    image_directory = 'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2'  # Change this to the correct directory
-    output_file = 'output_coordinates.txt'
+    image_directory = '/home/yuming/Documents/mt_data/preprocessed/imageset2'  # Change this to the correct directory
+    output_file = '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection/output_coordinates.txt'
     print("tracking curves...")
-    save_curve_coordinates(image_directory, output_file)
+    save_curve_coordinates(image_directory, output_file, no_bezier_fit=True)
     print("saving video...")
-    lengths = save_video_from_coordinates(output_file, image_shape=None, fps = 10, video_dir= 'C:/Users/Jackson/Documents/GitHub/microtuble-tracking/manual_detection', microtubule_dir= 'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2',interval=100, viewProcessed=True)
+    lengths = save_video_from_coordinates(output_file, image_shape=None, fps = 10, video_dir= '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection',
+                                           microtubule_dir= '/home/yuming/Documents/mt_data/preprocessed/imageset2',interval=100, viewProcessed=True)
     x = np.linspace(1,len(lengths),num = len(lengths))
     y = lengths
     plt.scatter(x,y)
