@@ -17,12 +17,15 @@ def read_coordinates(file_path):
             frames[frame_id].append((x, y))
     return frames
 
+
+
 def curve_length(points):
 
     if len(points) < 2:
         return 0.0
 
     length = 0.0
+    points = sorted(points, key=lambda coord: (coord[1], -coord[0]))
     for i in range(1, len(points)):
         dx = points[i][0] - points[i - 1][0]
         dy = points[i][1] - points[i - 1][1]
@@ -46,5 +49,6 @@ if __name__ == "__main__":
         x.append(frame)
         y.append(length)
     plt.scatter(x,y)
+    plt.ylim(0, 150)
     plt.show()
 

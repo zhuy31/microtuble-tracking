@@ -48,10 +48,10 @@ def connected_components(image, threshold=0):
 
 def preprocess_image(image,  target_size = (256,256)):
     image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-    image = cv2.fastNlMeansDenoisingColored(image, None, 30, 10, 7, 21)
+    image = cv2.fastNlMeansDenoisingColored(image, None, 25, 10, 7, 21)
     if len(image.shape)==3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) 
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
     image = clahe.apply(image)
     image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
     
@@ -250,17 +250,17 @@ def preprocess_images_in_directory(input_directory, output_directory, coords_fil
     
 
 def main(use_multithreading=False, max_workers=4):
-    display_size = sample_images_from_folder('C:/Users/Jackson/Downloads/MT_plus_Tracking/MT_plus_Tracking/5_20/MT10_2/MT10_30min_200x_1500_138_146pm')
+    display_size = sample_images_from_folder('/home/yuming/Downloads/MT10_30min_200x_1500_138_146pm (1)/MT10_30min_200x_1500_138_146pm')
     preprocess_images_in_directory(
-        'C:/Users/Jackson/Downloads/MT_plus_Tracking/MT_plus_Tracking/5_20/MT10_2/MT10_30min_200x_1500_138_146pm',
-        'C:/Users/Jackson/Documents/mt_data/preprocessed/imageset2',
-        'c:/Users/Jackson/Downloads/MT_plus_Tracking/MT_plus_Tracking/5_20/MT10_2/MT10_2_snake/MT10_1113.txt',
+        '/home/yuming/Downloads/MT10_30min_200x_1500_138_146pm (1)/MT10_30min_200x_1500_138_146pm',
+        '/home/yuming/Documents/mt_data/preprocessed/imageset2',
+        '/home/yuming/Downloads/MT10_1113.txt',
         bbox,
         display_size=display_size,
         use_multithreading=use_multithreading,
         max_workers=max_workers,
         manual_tracking= True,
-        test_dir= 'C:/Users/Jackson/Documents/mt_data/experimental'
+        test_dir= '/home/yuming/Documents/mt_data/experimental'
     )
 
 if __name__ == '__main__':
