@@ -30,7 +30,7 @@ def resize_image(image, target_size=(256, 256)):
     return cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
 
 def connected_components(image, threshold=0):
-    image = cv2.fastNlMeansDenoising(image, None, 20, 7, 21)
+    image = cv2.fastNlMeansDenoising(image, None, 25, 7, 21)
     
     _, binary = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
@@ -51,11 +51,12 @@ def preprocess_image(image,  target_size = (256,256)):
     image = cv2.fastNlMeansDenoisingColored(image, None, 25, 10, 7, 21)
     if len(image.shape)==3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) 
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+    image = cv2.blur(image,(5,5))
+    clahe = cv2.createCLAHE(clipLimit=3, tileGridSize=(8, 8))
     image = clahe.apply(image)
     image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-    
     image = connected_components(image)
+
 
     if target_size is not None:
         image = resize_image(image, target_size)
@@ -129,9 +130,23 @@ def plot_images_side_by_side(images, titles=None):
         axes[0, i].set_title(f"Original {i+1}")
         axes[0, i].axis('off')
 
-        # Preprocessed image on the bottom row
-        preprocessed_image = preprocess_image(image)
-        axes[1, i].imshow(cv2.cvtColor(preprocessed_image, cv2.COLOR_BGR2RGB))
+        grayscale_image = preprocess_image(image, target_size=None)
+        if image.shape[:2] != grayscale_image.shape:
+            grayscale_image = cv2.resize(grayscale_image, (image.shape[1], image.shape[0]))
+
+        # Create a mask where grayscale image pixels are greater than or equal to 20
+        mask = grayscale_image >= 20
+
+        # Stack the grayscale image into three channels to match the colored image's shape
+        grayscale_stacked = cv2.merge([grayscale_image, grayscale_image, grayscale_image])
+
+        # Replace pixels in the colored image with those from the grayscale image where the mask is true
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        image = cv2.merge([clahe.apply(cv2.split(image)[i]) for i in range(3)])
+
+        image[mask] = grayscale_stacked[mask]
+
+        axes[1, i].imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         axes[1, i].set_title(f"Preprocessed {i+1}")
         axes[1, i].axis('off')
 
@@ -185,6 +200,13 @@ def crop_and_rescale_coordinates(image, bbox, coords, display_size=1024, target_
 
 def process_single_image(input_path, output_path, output_directory, coords, bbox, target_size, display_size, test_dir=None, manual_tracking=False):
     image = cv2.imread(input_path)
+
+    #upscaling
+    scale_factor = 3
+    original_height, original_width = image.shape[:2]
+    new_width = int(original_width * scale_factor)
+    new_height = int(original_height * scale_factor)
+    image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
     
     if image is not None and manual_tracking is False:
         cropped_image, rescaled_coords = crop_and_rescale_coordinates(image, bbox, coords, display_size=display_size, target_size=target_size)
@@ -192,6 +214,7 @@ def process_single_image(input_path, output_path, output_directory, coords, bbox
         if test_dir is not None:
             test_output_path = os.path.join(test_dir, os.path.basename(output_path))
             cv2.imwrite(test_output_path, crop_image(image, bbox))
+        
         save_preprocessed_image(preprocessed_image, output_path,target_size=target_size)
         output_coords_file = os.path.join(output_directory, 'rescaled_coords.e')
         with open(output_coords_file, 'w') as file:

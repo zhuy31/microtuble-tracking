@@ -44,7 +44,7 @@ def connected_components(image, threshold=0):
             max_area = stats[i, cv2.CC_STAT_AREA]
 
     cleaned_image[labels == max_pointer] = image[labels == max_pointer]
-    return cleaned_image
+    return image
 
 def preprocess_image(image,  target_size = (256,256)):
     image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)

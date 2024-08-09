@@ -68,7 +68,7 @@ def track_image(image):
     return x_new, y_new
 
 
-def save_curve_coordinates(directory, output_file, control_points_count=6, num_points=400, no_bezier_fit = False):
+def save_curve_coordinates(directory, output_file):
 
     files = os.listdir(directory)
     image_files = sorted([f for f in files if f.lower().endswith(('png', 'jpg', 'jpeg', 'bmp', 'gif', 'tiff'))])
