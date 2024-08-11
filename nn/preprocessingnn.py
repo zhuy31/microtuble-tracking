@@ -30,7 +30,7 @@ def resize_image(image, target_size=(256, 256)):
     return cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
 
 def connected_components(image, threshold=0):
-    image = cv2.fastNlMeansDenoising(image, None, 25, 7, 21)
+    image = cv2.fastNlMeansDenoising(image, None, 20, 7, 21)
     
     _, binary = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
@@ -48,15 +48,14 @@ def connected_components(image, threshold=0):
 
 def preprocess_image(image,  target_size = (256,256)):
     image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-    image = cv2.fastNlMeansDenoisingColored(image, None, 25, 10, 7, 21)
+    image = cv2.fastNlMeansDenoisingColored(image, None, 30, 10, 7, 21)
     if len(image.shape)==3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) 
-    image = cv2.blur(image,(5,5))
-    clahe = cv2.createCLAHE(clipLimit=3, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     image = clahe.apply(image)
     image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+    
     image = connected_components(image)
-
 
     if target_size is not None:
         image = resize_image(image, target_size)
