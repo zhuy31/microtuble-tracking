@@ -10,7 +10,8 @@ from matplotlib.animation import FuncAnimation
 from skimage.morphology import skeletonize, binary_dilation, square
 import thinning
 import scipy.interpolate as interpolate
-
+from skimage.morphology import thin
+from plantcv import plantcv as pcv
 
 def add_text_to_image(image, text, position='lower_right', margin=10, font=cv2.FONT_HERSHEY_SIMPLEX, font_scale=1, thickness=2, color=(255, 255, 255)):
 
@@ -39,14 +40,30 @@ def add_text_to_image(image, text, position='lower_right', margin=10, font=cv2.F
     return image
 
 def find_contours(image):
-    _, thresh = cv2.threshold(image, 127, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    contour = max(contours, key=cv2.contourArea)
+    contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if len(contours) == 0:
+        contour = max(contours, key=cv2.contourArea)
+    else:
+        contour = [[[0,0]]]
     return contour
 
-def track_image(image):
+def process(image):
+
+    if len(image.shape)==3:
+        image = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY)
+
+    image = cv2.erode(image, np.ones((8, 8), np.uint8) , cv2.BORDER_REFLECT)  
+    image = cv2.filter2D(image,-1,np.ones((8,8),np.float32)/64) 
+
     _, image = cv2.threshold(image,20,255,cv2.THRESH_BINARY)
-    image = thinning.guo_hall_thinning(image)
+    image = thin(image).astype(np.uint8)
+    image, _, _ = pcv.morphology.prune(image,size=60)
+    return image
+
+def track_image(image):
+
+    image = process(image)
+
     contour = find_contours(image)
     contour = contour.squeeze()
     x = contour[:, 0]
@@ -187,13 +204,13 @@ def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtu
     return lengths
 
 if __name__ == "__main__":
-    image_directory = '/home/yuming/Documents/mt_data/preprocessed/imageset2'  # Change this to the correct directory
+    image_directory = '/home/yuming/Documents/mt_data/preprocessed/imageset1'  # Change this to the correct directory
     output_file = '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection/output_coordinates.txt'
     print("tracking curves...")
     save_curve_coordinates(image_directory, output_file)
     print("saving video...")
     lengths = save_video_from_coordinates(output_file, image_shape=None, fps = 10, video_dir= '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection',
-                                           microtubule_dir= '/home/yuming/Documents/mt_data/preprocessed/imageset2',interval=100)
+                                           microtubule_dir= '/home/yuming/Documents/mt_data/preprocessed/imageset1',interval=100)
     x = np.linspace(1,len(lengths),num = len(lengths))
     y = lengths
     plt.ylim(0,250)
