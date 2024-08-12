@@ -3,6 +3,48 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 import tqdm
+import fast_tsp
+
+def connected_components2(image, threshold=0):
+    image = cv2.fastNlMeansDenoising(image, None, 20, 7, 21)
+    
+    _, binary = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    cleaned_image = np.zeros_like(image)
+
+    max_area = -1
+    max_pointer = None
+    for i in range(1, num_labels):
+        if stats[i, cv2.CC_STAT_AREA] >= max_area:
+            max_pointer = i
+            max_area = stats[i, cv2.CC_STAT_AREA]
+
+    cleaned_image[labels == max_pointer] = image[labels == max_pointer]
+    return cleaned_image
+
+def process2(image, corner1, corner2, target_size = None):
+    x1, y1 = corner1
+    x2, y2 = corner2
+
+    
+
+    cropped_image = image[y1:y2, x1:x2]
+
+    cropped_image = cv2.normalize(cropped_image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+    cropped_image = cv2.fastNlMeansDenoisingColored(cropped_image, None, 30, 10, 7, 21)
+    if len(cropped_image.shape)==3:
+        image = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY)
+        cropped_image = cv2.cvtColor(cropped_image, cv2.COLOR_RGB2GRAY) 
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    cropped_image = clahe.apply(cropped_image)
+    cropped_image = cv2.normalize(cropped_image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+    
+    cropped_image = connected_components2(cropped_image)
+    
+    image = np.zeros_like(image)
+    image[y1:y2, x1:x2] = cropped_image
+
+    return image
 
 
 def resize(point1, point2, image, f):
@@ -27,7 +69,7 @@ def too_much_change(point1, point2, point3, point4, count):
 
     dist = np.linalg.norm(point3-point4)
 
-    if (np.linalg.norm(point1-point3) > 0.2*dist or np.linalg.norm(point2-point4) > 0.2*dist) and count < 4:
+    if (np.linalg.norm(point1-point3) > 0.15*dist or np.linalg.norm(point2-point4) > 0.15*dist) and count < 4:
         print("changed.")
         return point3, point4, count+1
     else:
@@ -47,7 +89,7 @@ def draw_non_black_rectangle(image, prev_upper_left, prev_lower_right, count, or
     if prev_upper_left is not None and prev_lower_right is not None:
         upper_left, lower_right, count = too_much_change(upper_left, lower_right, prev_upper_left, prev_lower_right, count)
 
-    image = cv2.rectangle(original_image, upper_left, lower_right, (255, 0, 0), 1)
+    image = process2(original_image, upper_left, lower_right)
 
     return image, upper_left, lower_right, count
 
@@ -74,10 +116,11 @@ def process(image, upper_left, lower_right, count):
     image = cv2.fastNlMeansDenoisingColored(image, None,15,10,7,21)
     image = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY)
     
-    _, image = cv2.threshold(image,60,255,cv2.THRESH_BINARY)
+    _, image = cv2.threshold(image,50,255,cv2.THRESH_BINARY)
     image = cv2.erode(image, np.ones((4,4)), iterations=1) 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(32,32))
     image = cv2.dilate(image, kernel, iterations=1) 
+
     image = get_largest_connected_component(image)
 
     image, upper_left, lower_right, count = draw_non_black_rectangle(image, upper_left, lower_right, count, original_image)
@@ -92,6 +135,12 @@ def load_images_from_directory(directory):
     images = [cv2.imread(file) for file in files]
     return images
 
+def add_text_to_image(image, text):
+    font, scale, color, thickness = cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2
+    (w, h), _ = cv2.getTextSize(text, font, scale, thickness)
+    x, y = image.shape[1] - w - 10, image.shape[0] - h - 10
+    return cv2.putText(image, text, (x, y), font, scale, color, thickness)
+
 def create_overlay_video(dir, output_video, fps=30):
 
     images = load_images_from_directory(dir)
@@ -104,8 +153,10 @@ def create_overlay_video(dir, output_video, fps=30):
     lower_right = None
     count = 0
 
-    for image in tqdm.tqdm(images):
+    for i, image in tqdm.tqdm(enumerate(images)):
         image, upper_left, lower_right, count = process(image, upper_left, lower_right, count)
+        image = cv2.cvtColor(image,cv2.COLOR_GRAY2RGB)
+        image = add_text_to_image(image, f'{i}')
         video.write(image)
     
     # Release the video writer

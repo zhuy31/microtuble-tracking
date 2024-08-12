@@ -42,9 +42,27 @@ def create_overlay_video(dir1, dir2, output_video, fps=30):
     video.release()
     print(f"Video saved as {output_video}")
 
+def create_video(dir, output_video, fps=30):
+
+    images = load_images_from_directory(dir)
+    height, width, _ = images[0].shape
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
+
+    for i, image in enumerate(images):
+
+        video.write(image)
+    
+    # Release the video writer
+    video.release()
+    print(f"Video saved as {output_video}")
+
+
 # Example usage
 dir1 = '/home/yuming/Documents/mt_data/preprocessed/imageset2'
 dir2 = '/home/yuming/Documents/mt_data/experimental'
+dir = '/home/yuming/Documents/mt_data/preprocessed/imageset3'
 output_video = '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection/output_video_1.mp4'
 
-create_overlay_video(dir1, dir2, output_video)
+create_video(dir, output_video)

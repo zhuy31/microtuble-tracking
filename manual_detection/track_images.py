@@ -204,13 +204,13 @@ def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtu
     return lengths
 
 if __name__ == "__main__":
-    image_directory = '/home/yuming/Documents/mt_data/preprocessed/imageset1'  # Change this to the correct directory
+    image_directory = '/home/yuming/Documents/mt_data/preprocessed/imageset3'  # Change this to the correct directory
     output_file = '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection/output_coordinates.txt'
     print("tracking curves...")
     save_curve_coordinates(image_directory, output_file)
     print("saving video...")
     lengths = save_video_from_coordinates(output_file, image_shape=None, fps = 10, video_dir= '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection',
-                                           microtubule_dir= '/home/yuming/Documents/mt_data/preprocessed/imageset1',interval=100)
+                                           microtubule_dir= '/home/yuming/Documents/mt_data/preprocessed/imageset3',interval=100)
     x = np.linspace(1,len(lengths),num = len(lengths))
     y = lengths
     plt.ylim(0,250)
