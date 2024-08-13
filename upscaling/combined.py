@@ -10,14 +10,12 @@ import astropy.units as u
 import pandas as pd
 from scipy.interpolate import interp1d
 from io import BytesIO
+import concurrent.futures
 
 
+def connected_components(image, threshold=0):
 
-def connected_components2(image, threshold=0):
-    image = cv2.fastNlMeansDenoising(image, None, 20, 7, 21)
-    
-    _, binary = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(image, connectivity=8)
     cleaned_image = np.zeros_like(image)
 
     max_area = -1
@@ -30,26 +28,31 @@ def connected_components2(image, threshold=0):
     cleaned_image[labels == max_pointer] = image[labels == max_pointer]
     return cleaned_image
 
+
 def process2(image, corner1, corner2, target_size = None):
     x1, y1 = corner1
     x2, y2 = corner2
+    image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
+    image = cv2.fastNlMeansDenoisingColored(image, None, 20, 10, 7, 21)
+    
+    image = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY)
 
-    cropped_image = image[y1:y2, x1:x2]
 
-    cropped_image = cv2.normalize(cropped_image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-    cropped_image = cv2.medianBlur(cropped_image, 5)
-    cropped_image = cv2.fastNlMeansDenoisingColored(cropped_image, None, 30, 10, 7, 21)
+    _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    cropped_image = binary[y1:y2, x1:x2]
+    cropped_image = connected_components(cropped_image)
+
     if len(cropped_image.shape)==3:
-        image = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY)
-        cropped_image = cv2.cvtColor(cropped_image, cv2.COLOR_RGB2GRAY) 
-    
-    cropped_image = cv2.filter2D(cropped_image,-1,kernel=np.ones((5,5))/25)
-    cropped_image = cv2.normalize(cropped_image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX)
-    
-    cropped_image = connected_components2(cropped_image)
-    
-    image = np.zeros_like(image)
-    image[y1:y2, x1:x2] = cropped_image
+        cropped_image = cv2.cvtColor(cropped_image, cv2.COLOR_BGR2GRAY) 
+
+    cropped_image = connected_components(cropped_image)
+
+    cimage = np.zeros_like(image)
+    cimage[y1:y2, x1:x2] = cropped_image
+    cimage = cv2.merge([np.zeros_like(cimage),np.zeros_like(cimage),cimage])
+
+    image = cv2.addWeighted(cimage,0.5,cv2.cvtColor(image,cv2.COLOR_GRAY2RGB),0.5,0)
 
     return image
 
@@ -171,7 +174,7 @@ def process_images(input_dir, output_dir):
             output_path = os.path.join(output_dir, filename)
             cv2.imwrite(output_path, image)
 
-def create_overlay_video(dir, output_video, fps=30):
+def create_overlay_video(dir, output_video, fps=10):
 
     images = load_images_from_directory(dir)
     height, width, _ = images[0].shape
@@ -183,9 +186,8 @@ def create_overlay_video(dir, output_video, fps=30):
     lower_right = None
     count = 0
 
-    for i, image in tqdm.tqdm(enumerate(images[-10:])):
+    for i, image in tqdm.tqdm(enumerate(images[::20])):
         image, upper_left, lower_right, count = process(image, upper_left, lower_right, count)
-        image = cv2.cvtColor(image,cv2.COLOR_GRAY2RGB)
         image = add_text_to_image(image, f'{i}')
         video.write(image)
     
@@ -199,4 +201,4 @@ dir = '/home/yuming/Documents/mt_data/experimental'
 output_video = '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection/output_video_2.mp4'
 output_dir = '/home/yuming/Documents/mt_data/preprocessed/imageset3'
 
-process_images(dir, output_dir)
+create_overlay_video(dir,output_video)

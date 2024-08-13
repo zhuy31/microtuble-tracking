@@ -38,6 +38,7 @@ def extract_longest_branch(skeleton):
     for x2,x1 in zip(y,x):
         output_image[int(x2),int(x1)] = 255
 
+    
     return output_image
 
 
@@ -71,12 +72,14 @@ def process(image):
 
     _, image = cv2.threshold(image,20,255,cv2.THRESH_BINARY)
     image = thin(image).astype(np.uint8)
+    image = connected_components(image)
     image = extract_longest_branch(image)
 
     return image
 
 def track_image(image_path):
     image = process(cv2.imread(image_path,cv2.IMREAD_GRAYSCALE))
+    print(image.shape)
     contour = find_contours(image)
     contour = contour.squeeze()
     x = contour[:, 0]

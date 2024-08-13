@@ -62,7 +62,7 @@ def create_video(dir, output_video, fps=30):
 # Example usage
 dir1 = '/home/yuming/Documents/mt_data/preprocessed/imageset2'
 dir2 = '/home/yuming/Documents/mt_data/experimental'
-dir = '/home/yuming/Documents/mt_data/preprocessed/imageset3'
+dir = '/home/yuming/Documents/mt_data/preprocessed/imageset2'
 output_video = '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection/output_video_1.mp4'
 
 create_video(dir, output_video)
