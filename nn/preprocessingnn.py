@@ -271,7 +271,7 @@ def preprocess_images_in_directory(input_directory, output_directory, coords_fil
 
     
 
-def main(use_multithreading=False, max_workers=4):
+def main(use_multithreading=False, max_workers=10):
     display_size = sample_images_from_folder('/home/yuming/Downloads/MT10_30min_200x_1500_138_146pm (1)/MT10_30min_200x_1500_138_146pm')
     preprocess_images_in_directory(
         '/home/yuming/Downloads/MT10_30min_200x_1500_138_146pm (1)/MT10_30min_200x_1500_138_146pm',
