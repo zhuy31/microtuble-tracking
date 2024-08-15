@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.fft as fft
 import matplotlib.pyplot as plt
-
+import cv2
 #load in tracking data from OLD tracking .txt format (neither the current imageJ plugin nor my python code)
 def parse_tracking_data_old(file_path):
     with open(file_path, 'r') as file:
@@ -38,12 +38,14 @@ def fourier_variations(dists, k_b = 1.38e-23, T = 298, m = 1e-10):
     omegas = np.sqrt(F/m)
 
     #convert from interval [0,2pi] to [-pi,pi]
-    omegas = np.concatenate((np.split(omegas,2)[1],np.split(omegas,2)[0]))
+    omegas = np.concatenate((np.array_split(omegas,2)[1],np.array_split(omegas,2)[0]))
 
     return omegas
 
+
+
 if __name__ == '__main__':
-    file_path = '/home/yuming/Downloads/MT_1/XYBeadsCoordNB26NT1000.txt'
+    file_path = '/home/yuming/Downloads/MT_1/txt1_27beads.txt'
     coordinates_array = parse_tracking_data_old(file_path)
     dists= distances(coordinates_array)
     omegas = fourier_variations(dists)
