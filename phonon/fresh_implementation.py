@@ -24,18 +24,22 @@ def distances(coords):
     
     return dists
 
-def fourier_variations(dists, k_b = 1.38e-23, T = 298, m = 100):
+def fourier_variations(dists, k_b = 1.38e-23, T = 298, m = 1e-10):
     dists = dists
-    fft_dists = fft.fft(dists,axis=0)
+    fft_dists = fft.fft(dists,axis=1)
     variances = np.var(fft_dists,axis=0)
     F = 2*k_b*T/variances
     omegas = np.sqrt(F/m)
+
+    #[0,2pi] -> [-pi,pi]
+    omegas = np.concatenate((np.split(omegas,2)[1],np.split(omegas,2)[0]))
+
     return omegas
 
 if __name__ == '__main__':
-    file_path = '/home/yuming/Downloads/20180521_50_per_Hyl_10ms_1000frames_123_concatenated/MT_1/txt1_27beads.txt'
+    file_path = '/home/yuming/Downloads/MT_1/XYBeadsCoordNB26NT1000.txt'
     coordinates_array = parse_tracking_data(file_path)
     dists= distances(coordinates_array)
     omegas = fourier_variations(dists)
-    plt.scatter(np.linspace(-np.pi,np.pi,num=len(omegas)),omegas)
+    plt.scatter(np.linspace(0,2*np.pi,num=len(omegas)),omegas)
     plt.show()
