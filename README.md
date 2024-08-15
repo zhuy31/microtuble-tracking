@@ -23,3 +23,6 @@ To-do:
 3) Clean up code, comment, and organize
 4) (?) Create neural network to do all of this faster (?)
 5) Create phonon spectrum calculator.
+
+another warning:
+as of right now, the code isn't working. it was working 2 or 3 days ago, I don't know what happened.
