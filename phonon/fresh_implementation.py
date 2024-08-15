@@ -2,7 +2,8 @@ import numpy as np
 import scipy.fft as fft
 import matplotlib.pyplot as plt
 
-def parse_tracking_data(file_path):
+#load in tracking data from OLD tracking .txt format (neither the current imageJ plugin nor my python code)
+def parse_tracking_data_old(file_path):
     with open(file_path, 'r') as file:
         lines = file.readlines()
 
@@ -16,30 +17,37 @@ def parse_tracking_data(file_path):
 
     return np.array(coordinates)
 
+#find distance array, that is, convert (x,y) -> L2 distance from mean
 def distances(coords):
     frames = coords.shape[0]
+
+    #this is a (Nx2) matrix, N = number of points used to track, representing mean positions
     means = np.mean(coords,axis=0)
+
+    #distance array
     dists = coords-np.array(np.array(frames*[means]))
     dists = np.linalg.norm(coords, 2, axis=2)
     
     return dists
 
+#calculate FFT of data, take variations, find F(q), and then omega(q)
 def fourier_variations(dists, k_b = 1.38e-23, T = 298, m = 1e-10):
-    dists = dists
     fft_dists = fft.fft(dists,axis=1)
     variances = np.var(fft_dists,axis=0)
     F = 2*k_b*T/variances
     omegas = np.sqrt(F/m)
 
-    #[0,2pi] -> [-pi,pi]
+    #convert from interval [0,2pi] to [-pi,pi]
     omegas = np.concatenate((np.split(omegas,2)[1],np.split(omegas,2)[0]))
 
     return omegas
 
 if __name__ == '__main__':
     file_path = '/home/yuming/Downloads/MT_1/XYBeadsCoordNB26NT1000.txt'
-    coordinates_array = parse_tracking_data(file_path)
+    coordinates_array = parse_tracking_data_old(file_path)
     dists= distances(coordinates_array)
     omegas = fourier_variations(dists)
+
+    #plot data
     plt.scatter(np.linspace(0,2*np.pi,num=len(omegas)),omegas)
     plt.show()
