@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.fft as fft
+import scipy.stats as stats
 import matplotlib.pyplot as plt
 from scipy.interpolate import splprep, splev
 from functools import partial
@@ -107,7 +108,7 @@ Main function for all of this.
 raw_coordinates just says if the data being loaded in is filamentJ raw output, true by default.
 file_path is the full path to the file. If on windows, makesure all backslashes are replaced by forward slashes.
 """
-def get_phonon_spectrum(file_path, num_points, raw_coordinates = True, dimer_mass = None):
+def get_phonon_spectrum(file_path, num_points, raw_coordinates = True, dimer_mass = None, frequency = True):
 
     #some mass calculations, courtesy of emil
     #need to do this microtubule by microtubule, I haven't really examined this yet so I'm just taking his word on it
@@ -135,7 +136,6 @@ def get_phonon_spectrum(file_path, num_points, raw_coordinates = True, dimer_mas
         omegas = distances_to_phonons(dists,m=dimer_mass)
 
     else:
-
         #load in data
         frames = parse_tracking_data_old(file_path)
 
@@ -143,28 +143,42 @@ def get_phonon_spectrum(file_path, num_points, raw_coordinates = True, dimer_mas
         dists = distances(frames)
         omegas = distances_to_phonons(dists)
 
+    if frequency is True:
+        omegas = omegas
+
     return omegas
 
+def get_velocity(freqs,h_param = 0.1):
+
+    freqs = freqs
+
+    lower = len(freqs)
+
+    upper = lower + h_param*(len(freqs)/2)
+    relevant_seg = freqs[int(lower):int(upper)]
+
+    velocity = 0
+    if len(relevant_seg) > 4:
+        res = stats.linregress(np.linspace(0,np.pi*h_param,num = len(relevant_seg)),relevant_seg)
+        velocity = res.slope
+
+    return velocity
+
 if __name__ == '__main__':
-    file_path = '/home/yuming/Downloads/MT_1/txt1_27beads.txt'
+
     #this is the one used, file path to filamentJ tracking data
     #enter file path here!
     file_path_1 = '/home/yuming/Downloads/MT_2/50_per_Hyl_10ms_1000frames_5_MMStack.ome_MT2_cropped-snakes'
     
-    #enter dimer mass here when ready, it will still work when dimer is None.
     dimer_mass = None
 
-    #scatter for each number of points, change number of points by changing num_points and label.
+    for pts in np.logspace(2,5,num=10):
+        frequencies = get_phonon_spectrum(file_path=file_path_1, num_points=int(pts),dimer_mass=dimer_mass)
+        x = np.linspace(0.2,0,num=1000)
+        y = [get_velocity(frequencies, h_param=h) for h in x]
+        
 
-    omegas1 = get_phonon_spectrum(file_path=file_path_1, num_points=27, dimer_mass=dimer_mass)
-    plt.scatter(np.linspace(0,2*np.pi,num=len(omegas1)),omegas1, s=2, label = '27')
-
-    omegas2 = get_phonon_spectrum(file_path=file_path_1, num_points=50,dimer_mass=dimer_mass)
-    plt.scatter(np.linspace(0,2*np.pi,num=len(omegas2)),omegas2, s=2, label = '50')
-
-    omegas3 = get_phonon_spectrum(file_path=file_path_1, num_points=100,dimer_mass=dimer_mass)
-    plt.scatter(np.linspace(0,2*np.pi,num=len(omegas3)),omegas3, s=2, label = '100')
-
-    plt.title(r'Phonon spectrum $\omega(q)$, with $q \in [-\pi,\pi]$', fontsize='small')
+        plt.scatter(x,y,label=f'{int(pts)}',s=1)
     plt.legend(loc=3)
     plt.show()
+
