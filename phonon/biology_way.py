@@ -28,18 +28,18 @@ def exp_func(x, a, b, c):
 def get_fourier_coeffs(file_path, num_points = 100):
 
     dists = distances(parse_tracking_data_old(file_path))
-    dists = dists[0:500,:]
-    print(f"distances shape = {dists.shape}")
+    dists = dists[0:250,:]
+
     coeffs = fft.fft(dists,axis=1)
 
     return coeffs
     
 
 def get_characteristic_time(coeffs, mode_number, time_window = 25, show = True):
-    print(coeffs.shape)
+
     mode = coeffs[:,mode_number]
 
-    y = [acf(mode,i) for i in range(time_window)]
+    y = [abs(acf(mode,i)) for i in range(time_window)]
     x = np.linspace(1,len(y),num=len(y))
 
     popt, pcov = curve_fit(exp_func, x, y)
@@ -78,7 +78,7 @@ if __name__ == "__main__":
     fourier_coeffs = get_fourier_coeffs(file_path_1)
 
     
-    tau_c = get_characteristic_time(fourier_coeffs, 0, show=True)
+    tau_c = get_characteristic_time(fourier_coeffs, 1, show=True)
     print(tau_c)
     
 

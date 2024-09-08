@@ -8,13 +8,14 @@ def read_coordinates(file_path):
     with open(file_path, 'r') as f:
         for line in f:
             parts = line.strip().split('\t')
-            frame_id = int(parts[0])
-            x = float(parts[2])
-            y = float(parts[3])
-            
-            if frame_id not in frames:
-                frames[frame_id] = []
-            frames[frame_id].append((x, y))
+            if len(parts) == 5:
+                frame_id = int(parts[0])
+                x = float(parts[2])
+                y = float(parts[3])
+                
+                if frame_id not in frames:
+                    frames[frame_id] = []
+                frames[frame_id].append((x, y))
     return frames
 
 
@@ -41,14 +42,14 @@ def calculate_lengths(file_path):
     return lengths
 
 if __name__ == "__main__":
-    file_path = '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection/output_coordinates.txt'  # Change this to the correct path
+    file_path = '/home/yuming/Documents/dev/python/projects/microtuble-tracking/output_coordinates.txt'  # Change this to the correct path
     lengths = calculate_lengths(file_path)
     x = []
     y = []
     for frame, length in lengths.items():
         x.append(frame)
         y.append(length)
-    plt.scatter(x,y)
+    plt.scatter(x,y,s=1)
     plt.ylim(0, 150)
     plt.show()
 

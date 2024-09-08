@@ -14,6 +14,16 @@ from astropy.io import fits
 from astropy import units as u
 import pandas as pd
 from skimage.morphology import thin
+import warnings
+
+warnings.filterwarnings(
+    action="ignore",
+    message="Graph pruning reached max iterations.",
+)
+warnings.filterwarnings(
+    action="ignore",
+    message="Using inputted mask. Skipping creation of anew mask."
+)
 
 def process_image(image):
     return image
@@ -47,7 +57,7 @@ def add_text_to_image(image, text, position='lower_right', margin=10, font=cv2.F
 
 def extract_longest_branch(skeleton):
 
-    fil = FilFinder2D(skeleton, distance=250 * u.pc, mask=skeleton)
+    fil = FilFinder2D(skeleton, distance=250 * u.pc, beamwidth= 1 * u.pix,mask=skeleton)
     fil.preprocess_image(flatten_percent=85)
     fil.create_mask(border_masking=True, verbose=False,
     use_existing_mask=True)
@@ -67,7 +77,9 @@ def extract_longest_branch(skeleton):
     output_image = np.zeros_like(skeleton)
 
     for x2,x1 in zip(y,x):
-        output_image[int(x2),int(x1)] = 255
+        x2 = min(max(int(x2),0),output_image.shape[0]-1)
+        x1 = min(max(int(x1),0),output_image.shape[1]-1)
+        output_image[x2,x1] = 255
 
     return output_image
 
@@ -97,12 +109,13 @@ def find_contours(image):
     
 def process(image):
 
-    image = cv2.erode(image, np.ones((8, 8), np.uint8) , cv2.BORDER_REFLECT)  
     image = cv2.filter2D(image,-1,np.ones((8,8),np.float32)/64)
+    
 
     _, image = cv2.threshold(image,20,255,cv2.THRESH_BINARY)
     image = thin(image).astype(np.uint8)
     image = connected_components(image)
+
     image = extract_longest_branch(image)
 
     return image
@@ -146,9 +159,7 @@ def save_curve_coordinates(directory, output_file, control_points_count=6, num_p
                 frame += 1
                 for i, (x, y) in enumerate(fitted_curve):
                     f.write(f"{frame}\t{i}\t{x}\t{y}\t0\n")
-
         else:
-            
             for filename in tqdm(image_files):
                 image_path = os.path.join(directory, filename)
                 image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
@@ -278,12 +289,12 @@ def save_video_from_coordinates(coordinate_file, image_shape, video_dir, microtu
     return lengths
 
 if __name__ == "__main__":
-    image_directory = '/home/yuming/Documents/mt_data/preprocessed/imageset2'  # Change this to the correct directory
-    output_file = '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection/output_coordinates.txt'
-
+    image_directory = '/home/yuming/Documents/mt_data/mt_data/preprocessed/imageset2'  # Change this to the correct directory
+    output_file = '/home/yuming/Documents/dev/python/projects/microtuble-tracking/output_coordinates.txt'
+    save_curve_coordinates(image_directory, output_file)
     print("saving video...")
     lengths = save_video_from_coordinates(output_file, image_shape=None, fps = 10, video_dir= '/home/yuming/Documents/dev/python/microtuble-tracking/manual_detection',
-                                           microtubule_dir= '/home/yuming/Documents/mt_data/preprocessed/imageset2',interval=100, viewProcessed=True)
+                                           microtubule_dir= '/home/yuming/Documents/mt_data/mt_data/preprocessed/imageset2',interval=100, viewProcessed=True)
     x = np.linspace(1,len(lengths),num = len(lengths))
     y = lengths
     plt.scatter(x,y)
